@@ -6,10 +6,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Provider } from 'react-redux'
 import { store } from './store'
+import { restoreAuth } from './store/authSlice'
 import { seedMockData } from './store/teamSlice'
 import { mockTeams, mockIndividuals, mockLocations, mockAchievements } from './mock/mockData'
 import './index.css'
 import App from './App'
+
+// Restore JWT session from localStorage (no network call)
+store.dispatch(restoreAuth())
 
 // Seed mock data when running without a real backend (VITE_API_URL not set)
 if (!import.meta.env.VITE_API_URL) {

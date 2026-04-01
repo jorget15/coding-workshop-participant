@@ -1,0 +1,217 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "ACME Team Management API",
+    "description": "CRUD for all four ACME Lambda microservices. Run Login first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "auth_url", "value": "http://du96xlbkfb10oe41vf94ncajgx9wcqst.lambda-url.us-east-1.localhost.localstack.cloud:4566" },
+    { "key": "individuals_url", "value": "http://w0qix3eg7iwxeah0cceco5w5iblvjmbh.lambda-url.us-east-1.localhost.localstack.cloud:4566" },
+    { "key": "teams_url", "value": "http://iw60i0k4agvjvrzujxldb3oun9zcezd8.lambda-url.us-east-1.localhost.localstack.cloud:4566" },
+    { "key": "achievements_url", "value": "http://37gf95jb5bgo5gr5vdhersdbzxe9deud.lambda-url.us-east-1.localhost.localstack.cloud:4566" },
+    { "key": "metadata_url", "value": "http://amza32q7wvradxxgln6tkbw3bckhcmh7.lambda-url.us-east-1.localhost.localstack.cloud:4566" },
+    { "key": "token", "value": "" },
+    { "key": "individual_id", "value": "" },
+    { "key": "team_id", "value": "" },
+    { "key": "achievement_id", "value": "" },
+    { "key": "location_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [{ "listen": "test", "script": { "exec": "var j = pm.response.json(); pm.collectionVariables.set('token', j.access_token);", "type": "text/javascript" } }],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"username\":\"admin@acme.com\",\"password\":\"Test1234!\"}" },
+            "url": "{{auth_url}}/auth/login"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"refresh_token\":\"{{token}}\"}" },
+            "url": "{{auth_url}}/auth/refresh"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Individuals",
+      "item": [
+        {
+          "name": "List Individuals",
+          "request": { "method": "GET", "header": [], "url": "{{individuals_url}}/individuals" }
+        },
+        {
+          "name": "Create Individual",
+          "event": [{ "listen": "test", "script": { "exec": "var j = pm.response.json(); pm.collectionVariables.set('individual_id', j.id);", "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"first_name\":\"Jorge\",\"last_name\":\"Taban\",\"email\":\"jorge.taban@acme.com\",\"staff_type\":\"Employee\",\"job_title\":\"Engineer\",\"password\":\"Test1234!\"}" },
+            "url": "{{individuals_url}}/individuals"
+          }
+        },
+        {
+          "name": "Get Individual",
+          "request": { "method": "GET", "header": [], "url": "{{individuals_url}}/individuals/{{individual_id}}" }
+        },
+        {
+          "name": "Update Individual",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"job_title\":\"Senior Engineer\"}" },
+            "url": "{{individuals_url}}/individuals/{{individual_id}}"
+          }
+        },
+        {
+          "name": "Get Avatar Upload URL",
+          "request": { "method": "POST", "header": [], "url": "{{individuals_url}}/individuals/{{individual_id}}/avatar-upload-url" }
+        },
+        {
+          "name": "Soft Delete Individual (R4)",
+          "request": { "method": "DELETE", "header": [], "url": "{{individuals_url}}/individuals/{{individual_id}}" }
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "item": [
+        {
+          "name": "List Teams",
+          "request": { "method": "GET", "header": [], "url": "{{teams_url}}/teams" }
+        },
+        {
+          "name": "Create Team",
+          "event": [{ "listen": "test", "script": { "exec": "var j = pm.response.json(); pm.collectionVariables.set('team_id', j.id);", "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"team_name\":\"Alpha Squad\"}" },
+            "url": "{{teams_url}}/teams"
+          }
+        },
+        {
+          "name": "Get Team",
+          "request": { "method": "GET", "header": [], "url": "{{teams_url}}/teams/{{team_id}}" }
+        },
+        {
+          "name": "Update Team",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"team_name\":\"Alpha Squad Renamed\"}" },
+            "url": "{{teams_url}}/teams/{{team_id}}"
+          }
+        },
+        {
+          "name": "Add Member to Team (R1/R2)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"individual_id\":\"{{individual_id}}\",\"member_role\":\"Member\"}" },
+            "url": "{{teams_url}}/teams/{{team_id}}/members"
+          }
+        },
+        {
+          "name": "Remove Member from Team",
+          "request": { "method": "DELETE", "header": [], "url": "{{teams_url}}/teams/{{team_id}}/members/{{individual_id}}" }
+        },
+        {
+          "name": "Close Team (R5)",
+          "request": { "method": "DELETE", "header": [], "url": "{{teams_url}}/teams/{{team_id}}" }
+        }
+      ]
+    },
+    {
+      "name": "Achievements",
+      "item": [
+        {
+          "name": "List Achievements",
+          "request": { "method": "GET", "header": [], "url": "{{achievements_url}}/achievements" }
+        },
+        {
+          "name": "Create Achievement (team-scoped)",
+          "event": [{ "listen": "test", "script": { "exec": "var j = pm.response.json(); pm.collectionVariables.set('achievement_id', j.id);", "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"title\":\"Q1 Top Performer\",\"description\":\"Highest output in Q1\",\"scope\":\"team\",\"team_id\":\"{{team_id}}\",\"awarded_to\":[\"{{individual_id}}\"]}" },
+            "url": "{{achievements_url}}/achievements"
+          }
+        },
+        {
+          "name": "Create Achievement (org bounty)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"title\":\"Compliance Badge\",\"description\":\"Completed compliance training\",\"scope\":\"org\"}" },
+            "url": "{{achievements_url}}/achievements"
+          }
+        },
+        {
+          "name": "Get Achievement",
+          "request": { "method": "GET", "header": [], "url": "{{achievements_url}}/achievements/{{achievement_id}}" }
+        },
+        {
+          "name": "Update Achievement",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"description\":\"Updated description\"}" },
+            "url": "{{achievements_url}}/achievements/{{achievement_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metadata",
+      "item": [
+        {
+          "name": "Get Enums",
+          "request": { "method": "GET", "header": [], "url": "{{metadata_url}}/enums" }
+        },
+        {
+          "name": "List Locations",
+          "request": { "method": "GET", "header": [], "url": "{{metadata_url}}/locations" }
+        },
+        {
+          "name": "Create Location",
+          "event": [{ "listen": "test", "script": { "exec": "var j = pm.response.json(); pm.collectionVariables.set('location_id', j.id);", "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"name\":\"HQ New York\",\"city\":\"New York\",\"country\":\"US\"}" },
+            "url": "{{metadata_url}}/locations"
+          }
+        },
+        {
+          "name": "Update Location",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"city\":\"Manhattan\"}" },
+            "url": "{{metadata_url}}/locations/{{location_id}}"
+          }
+        },
+        {
+          "name": "Delete Location",
+          "request": { "method": "DELETE", "header": [], "url": "{{metadata_url}}/locations/{{location_id}}" }
+        }
+      ]
+    }
+  ]
+}

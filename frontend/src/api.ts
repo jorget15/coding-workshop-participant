@@ -1,10 +1,13 @@
 import axios from 'axios'
 
-// VITE_API_URL = proxy base (http://localhost:3001 locally, CloudFront URL in production).
-// All service routes live under /api so the proxy can route by service name:
-//   http://localhost:3001/api/teams  →  teams Lambda
-//   http://localhost:3001/api/individuals  →  individuals Lambda
-const BASE = (import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? 'http://localhost:3001') + '/api'
+// In development, Vite proxies /api/* to the Node proxy (http://localhost:3001)
+// which routes each service path to the correct Lambda URL.
+// In production (CloudFront), VITE_API_URL is set to the CloudFront base URL.
+// Using a relative base in dev means the browser never makes a cross-origin
+// request — Vite handles the forwarding server-side, so no CORS issues.
+const BASE = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/$/, '') + '/api'
+  : '/api'
 
 const api = axios.create({ baseURL: BASE })
 

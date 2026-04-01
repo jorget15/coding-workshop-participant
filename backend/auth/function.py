@@ -94,26 +94,92 @@ async def login(
     body: LoginRequest,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> TokenResponse:
-    """
-    TODO: implement full login
-    1. Query db["individuals"] for an active document where username == body.username.
-    2. Verify bcrypt: bcrypt.checkpw(body.password.encode(), stored_hash.encode())
-    3. If invalid → 401 "Invalid username or password." (same message for both cases — no enumeration)
-    4. If individual.isActive is False → 403 "Account is deactivated."
-    5. Determine role:
-       - "system_admin" if "system_admin" in individual.roles
-       - "team_lead"    if individual is the active Leader of a team (query teams collection)
-       - "editor"       if "editor" in individual.roles
-       - "viewer"       otherwise
-    6. Find the individual's current active team membership (query teams.members where
-       memberId == individual._id and endDate is None) to populate team_id.
-    7. Build JWT payload and call _sign_token().
-    8. Return TokenResponse.
-    """
-    # --- placeholder: replace with real DB + bcrypt logic ---
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Login not yet implemented — pending DB wiring.",
+    # Look up individual by email (used as username) — active only
+    individual = await db["individuals"].find_one(
+        {"email": body.username, "isActive": True}
+    )
+
+    # Identical error for missing user or wrong password — prevents user enumeration
+    _invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid username or password.",
+    )
+
+    if individual is None:
+        raise _invalid
+
+    auth_block = individual.get("auth") or {}
+    hashed: Optional[str] = auth_block.get("hashedPassword")
+    if not hashed:
+        raise _invalid
+
+    if not bcrypt.checkpw(body.password.encode(), hashed.encode()):
+        raise _invalid
+
+    # Stamp lastLogin — fire-and-forget, don't block the response
+    await db["individuals"].update_one(
+        {"_id": individual["_id"]},
+        {"$set": {"auth.lastLogin": datetime.now(timezone.utc).isoformat()}},
+    )
+
+    user_id = str(individual["_id"])
+    username = f"{individual.get('firstName', '')} {individual.get('lastName', '')}".strip()
+
+    # Determine role — check for system_admin flag first, then team leadership
+    roles: list = individual.get("roles", [])
+    if "system_admin" in roles:
+        role = "system_admin"
+        team_id = None
+    else:
+        # Check if this individual is an active Leader on any team
+        team = await db["teams"].find_one(
+            {
+                "isActive": True,
+                "members": {
+                    "$elemMatch": {
+                        "memberId": user_id,
+                        "memberRole": "Leader",
+                        "endDate": None,
+                    }
+                },
+            }
+        )
+        if team:
+            role = "team_lead"
+            team_id = str(team["_id"])
+        elif "editor" in roles:
+            role = "editor"
+            # Find their current active team membership
+            member_team = await db["teams"].find_one(
+                {
+                    "isActive": True,
+                    "members": {
+                        "$elemMatch": {"memberId": user_id, "endDate": None}
+                    },
+                }
+            )
+            team_id = str(member_team["_id"]) if member_team else None
+        else:
+            role = "viewer"
+            member_team = await db["teams"].find_one(
+                {
+                    "isActive": True,
+                    "members": {
+                        "$elemMatch": {"memberId": user_id, "endDate": None}
+                    },
+                }
+            )
+            team_id = str(member_team["_id"]) if member_team else None
+
+    token = _sign_token(
+        {"sub": user_id, "username": username, "role": role, "team_id": team_id}
+    )
+    return TokenResponse(
+        access_token=token,
+        role=role,
+        user_id=user_id,
+        username=username,
+        team_id=team_id,
     )
 
 
@@ -129,16 +195,37 @@ async def refresh(
     body: RefreshRequest,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> TokenResponse:
-    """
-    TODO: implement token refresh
-    1. Decode body.token using jose.jwt.decode() — raise 401 on JWTError / ExpiredSignatureError.
-    2. Re-fetch the individual from DB (verify still active — raise 403 if deactivated).
-    3. Issue a new token with the same payload but a fresh expiry.
-    4. Return TokenResponse.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Refresh not yet implemented — pending DB wiring.",
+    from jose import ExpiredSignatureError, JWTError
+    from jose import jwt as jose_jwt
+    from bson import ObjectId
+
+    secret = os.environ["JWT_SECRET"]
+    algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+
+    try:
+        payload = jose_jwt.decode(body.token, secret, algorithms=[algorithm])
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired.")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+
+    user_id = payload.get("sub")
+    individual = await db["individuals"].find_one({"_id": ObjectId(user_id)})
+    if not individual or not individual.get("isActive"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is deactivated.")
+
+    new_token = _sign_token({
+        "sub": user_id,
+        "username": payload.get("username"),
+        "role": payload.get("role"),
+        "team_id": payload.get("team_id"),
+    })
+    return TokenResponse(
+        access_token=new_token,
+        role=payload.get("role", "viewer"),
+        user_id=user_id,
+        username=payload.get("username", ""),
+        team_id=payload.get("team_id"),
     )
 
 

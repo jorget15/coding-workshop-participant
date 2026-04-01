@@ -26,22 +26,44 @@ interface AuthState {
 }
 
 const initialState: AuthState = {
-  isAuthenticated: true,
-  userId:    'dev-001',
-  username:  'Dev User',
-  email:     'dev@acme.com',
-  role:      'system_admin',
-  staffType: 'direct',
+  isAuthenticated: false,
+  userId:    null,
+  username:  null,
+  email:     null,
+  role:      null,
+  staffType: null,
   teamId:    null,
   loading:   false,
   error:     null,
 }
 
+/** Decode the stored JWT and restore session without a network call. */
+export const restoreAuth = createAsyncThunk(
+  'auth/restore',
+  async (_, { rejectWithValue }) => {
+    const token = localStorage.getItem('acme_token')
+    if (!token) return rejectWithValue('no token')
+    try {
+      // JWT payload is base64url-encoded — decode it client-side (no verify needed here;
+      // the backend verifies on every request anyway)
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      if (payload.exp * 1000 < Date.now()) {
+        localStorage.removeItem('acme_token')
+        return rejectWithValue('token expired')
+      }
+      return { ...payload, token }
+    } catch {
+      localStorage.removeItem('acme_token')
+      return rejectWithValue('invalid token')
+    }
+  }
+)
+
 export const loginAsync = createAsyncThunk(
   'auth/login',
   async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
     try {
-      const res = await api.post('/login', { email, password })
+      const res = await api.post('/auth/login', { email, password })
       return res.data // { userId, name, role }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } }
@@ -81,6 +103,19 @@ const authSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      .addCase(restoreAuth.fulfilled, (state, action) => {
+        state.isAuthenticated = true
+        state.userId    = action.payload.userId  ?? action.payload.sub ?? null
+        state.username  = action.payload.username ?? action.payload.name ?? null
+        state.email     = action.payload.email   ?? null
+        state.role      = action.payload.role    ?? null
+        state.staffType = action.payload.staffType ?? null
+        state.teamId    = action.payload.teamId  ?? null
+      })
+      .addCase(restoreAuth.rejected, (state) => {
+        // Token missing/expired — stay unauthenticated, no error shown
+        state.isAuthenticated = false
+      })
       .addCase(loginAsync.pending, (state) => {
         state.loading = true
         state.error   = null
