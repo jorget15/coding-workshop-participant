@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from shared.db import get_db
 
 app = FastAPI(title="ACME Auth Service")
+router = APIRouter()
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,7 +82,7 @@ def _sign_token(payload: dict) -> str:
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.post(
+@router.post(
     "/login",
     response_model=TokenResponse,
     summary="Authenticate and receive a JWT.",
@@ -183,7 +184,7 @@ async def login(
     )
 
 
-@app.post(
+@router.post(
     "/refresh",
     response_model=TokenResponse,
     summary="Exchange a valid token for a fresh one.",
@@ -232,4 +233,6 @@ async def refresh(
 # ---------------------------------------------------------------------------
 # Lambda entry point
 # ---------------------------------------------------------------------------
+app.include_router(router, prefix="/auth", tags=["auth"])
+
 handler = Mangum(app, api_gateway_base_path="/api")

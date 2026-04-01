@@ -202,7 +202,7 @@ async def get_enums() -> dict:
 # ---------------------------------------------------------------------------
 # Mount router and expose Mangum Lambda handler
 # ---------------------------------------------------------------------------
-app.include_router(router, tags=["metadata"])
+app.include_router(router, prefix="/metadata", tags=["metadata"])
 
 handler = Mangum(app, api_gateway_base_path="/api")
 
