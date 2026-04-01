@@ -300,5 +300,5 @@ async def remove_member(
 # ---------------------------------------------------------------------------
 app.include_router(router, prefix="/teams", tags=["teams"])
 
-handler = Mangum(app)
+handler = Mangum(app, api_gateway_base_path="/api")
 

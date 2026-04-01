@@ -227,5 +227,5 @@ async def update_achievement(
 # ---------------------------------------------------------------------------
 app.include_router(router, prefix="/achievements", tags=["achievements"])
 
-handler = Mangum(app)
+handler = Mangum(app, api_gateway_base_path="/api")
 

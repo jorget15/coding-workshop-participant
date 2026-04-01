@@ -204,5 +204,5 @@ async def get_enums() -> dict:
 # ---------------------------------------------------------------------------
 app.include_router(router, tags=["metadata"])
 
-handler = Mangum(app)
+handler = Mangum(app, api_gateway_base_path="/api")
 

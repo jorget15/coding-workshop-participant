@@ -54,11 +54,18 @@ def _build_uri() -> str:
         return f"mongodb://{credentials}{host}:{port}/"
 
     # AWS DocumentDB requires TLS + replica set settings
-    # global-bundle.pem must be bundled with the Lambda package
+    # global-bundle.pem is downloaded by deploy-backend.sh into each Lambda source dir
+    pem_candidates = [
+        "/var/task/global-bundle.pem",          # bundled in Lambda zip
+        "/var/task/shared/global-bundle.pem",   # fallback in shared layer
+        os.path.join(os.path.dirname(__file__), "global-bundle.pem"),  # local
+    ]
+    pem_path = next((p for p in pem_candidates if os.path.exists(p)), None)
+    tls_part = f"&tlsCAFile={pem_path}" if pem_path else ""
     return (
         f"mongodb://{credentials}{host}:{port}/"
         f"?tls=true"
-        f"&tlsCAFile=/var/task/global-bundle.pem"
+        f"{tls_part}"
         f"&replicaSet=rs0"
         f"&readPreference=secondaryPreferred"
         f"&retryWrites=false"

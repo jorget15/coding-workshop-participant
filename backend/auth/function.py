@@ -232,4 +232,4 @@ async def refresh(
 # ---------------------------------------------------------------------------
 # Lambda entry point
 # ---------------------------------------------------------------------------
-handler = Mangum(app)
+handler = Mangum(app, api_gateway_base_path="/api")

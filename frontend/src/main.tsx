@@ -15,8 +15,9 @@ import App from './App'
 // Restore JWT session from localStorage (no network call)
 store.dispatch(restoreAuth())
 
-// Seed mock data when running without a real backend (VITE_API_URL not set)
-if (!import.meta.env.VITE_API_URL) {
+// Seed mock data only when explicitly requested (VITE_USE_MOCK=true in .env.local).
+// On CloudFront (production), VITE_API_URL is empty but we still want real API calls.
+if (import.meta.env.VITE_USE_MOCK === 'true') {
   store.dispatch(seedMockData({
     teams: mockTeams,
     individuals: mockIndividuals,

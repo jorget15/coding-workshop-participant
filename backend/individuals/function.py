@@ -293,5 +293,5 @@ async def get_avatar_upload_url(
 # ---------------------------------------------------------------------------
 app.include_router(router, prefix="/individuals", tags=["individuals"])
 
-handler = Mangum(app)
+handler = Mangum(app, api_gateway_base_path="/api")
 

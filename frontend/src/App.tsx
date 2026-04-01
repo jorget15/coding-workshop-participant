@@ -82,7 +82,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/*"     element={<AuthenticatedApp />} />
+        <Route path="/*"     element={<ProtectedRoute><AuthenticatedApp /></ProtectedRoute>} />
       </Routes>
       <ToastContainer position="top-right" theme="light" autoClose={3000} />
       <DevRoleSwitcher />
