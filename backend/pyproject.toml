@@ -1,0 +1,15 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "boto3>=1.42.80",
+    "fastapi>=0.135.2",
+    "mangum>=0.21.0",
+    "motor>=3.7.1",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic[email]>=2.12.5",
+    "python-jose>=3.5.0",
+]

@@ -104,6 +104,11 @@ ipython_config.py
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 #poetry.lock
 
+# uv
+#   uv.lock can be committed for applications to ensure reproducibility.
+#   For libraries, it is generally not recommended to commit it.
+uv.lock
+
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
 #pdm.lock
