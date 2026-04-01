@@ -23,9 +23,14 @@ var/
 wheels/
 share/python-wheels/
 *.egg-info/
+*.dist-info/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Lambda pip-installed deps (Terraform handles these at deploy via pip_requirements)
+backend/*/bin/
+backend/*/*.so
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

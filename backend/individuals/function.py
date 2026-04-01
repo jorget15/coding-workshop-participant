@@ -29,7 +29,8 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
-import bcrypt as _bcrypt
+import hashlib as _hashlib
+import secrets as _secrets
 from pydantic import BaseModel, EmailStr, Field
 
 from shared.auth import CurrentUser, get_current_user, require_role
@@ -37,8 +38,10 @@ from shared.db import get_db
 
 
 def _hash_password(plain: str) -> str:
-    """Hash a plaintext password with bcrypt. Truncates to 72 bytes (bcrypt limit)."""
-    return _bcrypt.hashpw(plain.encode("utf-8")[:72], _bcrypt.gensalt()).decode("utf-8")
+    """Hash a plaintext password with PBKDF2-SHA256 (stdlib, no C deps)."""
+    salt = _secrets.token_hex(16)
+    dk = _hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt.encode("utf-8"), 260000)
+    return f"$pbkdf2-sha256${salt}${dk.hex()}"
 
 
 def _doc(d: dict) -> dict:

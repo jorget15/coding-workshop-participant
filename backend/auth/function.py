@@ -15,7 +15,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import bcrypt
+import hashlib
+import secrets
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
@@ -61,6 +62,16 @@ class RefreshRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _verify_password(plain: str, stored_hash: str) -> bool:
+    """Verify a password against a $pbkdf2-sha256$salt$hash string."""
+    try:
+        _, _, algo, salt, dk_hex = stored_hash.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt.encode("utf-8"), 260000)
+        return secrets.compare_digest(dk.hex(), dk_hex)
+    except (ValueError, AttributeError):
+        return False
+
 
 def _sign_token(payload: dict) -> str:
     """Sign a JWT with the configured secret and expiry."""
@@ -114,7 +125,7 @@ async def login(
     if not hashed:
         raise _invalid
 
-    if not bcrypt.checkpw(body.password.encode(), hashed.encode()):
+    if not _verify_password(body.password, hashed):
         raise _invalid
 
     # Stamp lastLogin — fire-and-forget, don't block the response

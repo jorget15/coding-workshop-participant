@@ -1,5 +1,5 @@
 """
-Seed script — inserts test users with bcrypt-hashed passwords into MongoDB.
+Seed script — inserts test users with PBKDF2-hashed passwords into MongoDB.
 
 Usage (from backend/ directory):
     PYTHONPATH=. uv run python seed.py
@@ -12,90 +12,107 @@ import asyncio
 import os
 from datetime import datetime, timezone
 
-import bcrypt
-from bson import ObjectId
+import hashlib
+import secrets
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+_now = datetime.now(timezone.utc).isoformat()
+
 
 def _hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 260000)
+    return f"$pbkdf2-sha256${salt}${dk.hex()}"
 
 
 # ---------------------------------------------------------------------------
 # Seed data — one user per role
+# Field names and values match the individuals $jsonSchema validator exactly.
 # (passwords shown here are dev-only; never commit real credentials)
 # ---------------------------------------------------------------------------
 SEED_USERS = [
     {
-        "_id": ObjectId("660000000000000000000001"),
-        "firstName": "Alice",
-        "lastName": "Smith",
+        "_id": "ind_001",
+        "personName": "Alice Smith",
         "email": "alice@acme.com",
         "jobTitle": "Engineering Manager",
-        "staffType": "FTE",
-        "isActive": True,
+        "staffType": "direct",
+        "primaryLocation": "loc_hq",
         "roles": ["system_admin"],
-        "locationId": None,
         "profilePicture": "avatars/defaults/default_01.png",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": _now,
+        "updatedAt": _now,
         "auth": {
             "hashedPassword": _hash("Admin1234!"),
-            "lastLogin": None,
         },
     },
     {
-        "_id": ObjectId("660000000000000000000002"),
-        "firstName": "Bob",
-        "lastName": "Jones",
+        "_id": "ind_002",
+        "personName": "Bob Jones",
         "email": "bob@acme.com",
         "jobTitle": "Team Lead",
-        "staffType": "FTE",
-        "isActive": True,
-        "roles": [],
-        "locationId": None,
+        "staffType": "direct",
+        "primaryLocation": "loc_hq",
+        "roles": ["team_lead"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": _now,
+        "updatedAt": _now,
         "auth": {
             "hashedPassword": _hash("Lead1234!"),
-            "lastLogin": None,
         },
     },
     {
-        "_id": ObjectId("660000000000000000000003"),
-        "firstName": "Carol",
-        "lastName": "White",
+        "_id": "ind_003",
+        "personName": "Carol White",
         "email": "carol@acme.com",
         "jobTitle": "Senior Developer",
-        "staffType": "FTE",
-        "isActive": True,
+        "staffType": "direct",
+        "primaryLocation": "loc_hq",
         "roles": ["editor"],
-        "locationId": None,
         "profilePicture": "avatars/defaults/default_01.png",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": _now,
+        "updatedAt": _now,
         "auth": {
             "hashedPassword": _hash("Editor1234!"),
-            "lastLogin": None,
         },
     },
     {
-        "_id": ObjectId("660000000000000000000004"),
-        "firstName": "Dan",
-        "lastName": "Brown",
+        "_id": "ind_004",
+        "personName": "Dan Brown",
         "email": "dan@acme.com",
         "jobTitle": "Analyst",
-        "staffType": "Contractor",
-        "isActive": True,
-        "roles": [],
-        "locationId": None,
+        "staffType": "non-direct",
+        "primaryLocation": "loc_hq",
+        "roles": ["viewer"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": _now,
+        "updatedAt": _now,
         "auth": {
             "hashedPassword": _hash("Viewer1234!"),
-            "lastLogin": None,
         },
+    },
+]
+
+
+SEED_LOCATIONS = [
+    {
+        "_id": "loc_hq",
+        "name": "ACME Headquarters",
+        "city": "Miami",
+        "country": "US",
+        "region": "NAM",
+        "timezone": "America/New_York",
     },
 ]
 
@@ -115,6 +132,16 @@ async def seed() -> None:
     client = AsyncIOMotorClient(uri)
     db = client[db_name]
 
+    # --- Locations ---
+    for loc in SEED_LOCATIONS:
+        existing = await db["locations"].find_one({"_id": loc["_id"]})
+        if existing:
+            print(f"  skip  location {loc['_id']} (already exists)")
+        else:
+            await db["locations"].insert_one(loc)
+            print(f"  added location {loc['_id']}")
+
+    # --- Individuals ---
     inserted = 0
     skipped = 0
     for user_doc in SEED_USERS:
@@ -131,9 +158,9 @@ async def seed() -> None:
     print(f"\nDone — {inserted} inserted, {skipped} skipped.")
     print("\nTest credentials:")
     print("  alice@acme.com   / Admin1234!   (system_admin)")
-    print("  bob@acme.com     / Lead1234!    (team_lead — needs a team with Leader role)")
+    print("  bob@acme.com     / Lead1234!    (team_lead)")
     print("  carol@acme.com   / Editor1234!  (editor)")
-    print("  dan@acme.com     / Viewer1234!  (viewer)")
+    print("  dan@acme.com     / Viewer1234!  (viewer — non-direct)")
 
 
 if __name__ == "__main__":
