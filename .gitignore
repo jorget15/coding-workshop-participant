@@ -201,16 +201,26 @@ app/db
 # Node.js
 node_modules/
 npm-debug.log*
-package-lock.json*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+.pnp
+.pnp.js
 
-# Optional eslint cache
+# Lock files (apps commit these; remove the line if you want to commit)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Optional lint/type caches
 .eslintcache
+*.tsbuildinfo
 
 # Environment variables
 .env
 .env.*
+.env.local
+.env.*.local
 !.env.sample
 ENVIRONMENT.config
 
@@ -239,10 +249,16 @@ Thumbs.db
 
 # Frontend build artifacts and dependencies
 frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
 
-# Keep package.json for participant setup
+# Keep participant setup files
 !frontend/package.json
 !frontend/README.md
+!frontend/tsconfig*.json
+!frontend/vite.config.ts
+!frontend/index.html
 
 # Terraform plan files
 tfplan

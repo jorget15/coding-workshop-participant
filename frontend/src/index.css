@@ -1,68 +1,56 @@
+@import "tailwindcss";
+
+/* ── Runtime CSS variables ─────────────────────────────────────────────── */
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --acme-surface: #e5e7eb;
+  --acme-card:    #f0efef;
+  --acme-text:    #1E293B;
+  --acme-muted:   #64748B;
+  --acme-border:  #E2E8F0;
+  --acme-heading: #001A5E;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+.dark {
+  --acme-surface: #0F172A;
+  --acme-card:    #1E293B;
+  --acme-text:    #F1F5F9;
+  --acme-muted:   #94A3B8;
+  --acme-border:  #334155;
+  --acme-heading: #F1F5F9;
 }
-a:hover {
-  color: #535bf2;
+
+@theme {
+  /* Brand */
+  --color-acme-navy:    #001A5E;
+  --color-acme-blue:    #003087;
+  --color-acme-action:  #0066CC;
+  --color-acme-light:   #56B4E0;
+  --color-acme-red:     #CC0000;
+  --color-acme-green:   #16a34a;
+  --color-acme-amber:   #d97706;
+
+  /* Surface tokens */
+  --color-acme-surface: var(--acme-surface);
+  --color-acme-card:    var(--acme-card);
+  --color-acme-text:    var(--acme-text);
+  --color-acme-muted:   var(--acme-muted);
+  --color-acme-border:  var(--acme-border);
+  --color-acme-heading: var(--acme-heading);
+
+  /* Admin */
+  --color-admin-bg:      #070d1a;
+  --color-admin-surface: #0d1526;
+  --color-admin-card:    #111e35;
+  --color-admin-border:  #1e3a5f;
+  --color-admin-accent:  #00c6ff;
+  --color-admin-text:    #e2eaf8;
+  --color-admin-muted:   #5a7a9e;
+  --color-admin-green:   #00d98b;
+  --color-admin-red:     #ff4757;
+
+  --font-admin: 'JetBrains Mono', monospace;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+  font-family: 'DM Sans', sans-serif;
 }

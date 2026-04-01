@@ -1,0 +1,381 @@
+# ACME Team Management — Frontend Structure
+
+This document defines the page inventory, navigation, RBAC rules, and key UI patterns for the React frontend.
+
+---
+
+## 1. Role Definitions
+
+The application recognizes five effective user types, derived from the `roles[]` array and `staffType` field on the `individuals` collection.
+
+| User type | Determined by | Description |
+|-----------|--------------|-------------|
+| **System admin** | `roles` includes `system_admin` | Full access to everything. Sees the admin sidebar. Can CRUD all entities. |
+| **Team lead** | `roles` includes `team_lead` | Manages their own team: members, achievements, history. Read-only view of other teams. |
+| **Editor (direct)** | `roles` includes `editor` + `staffType: "direct"` | Can view own team and edit their own profile. Read-only for team data. |
+| **Viewer (direct)** | `roles` includes `viewer` + `staffType: "direct"` | Same screens as editor but everything is read-only, including own profile. |
+| **Non-direct** | `staffType: "non-direct"` (any role) | Restricted read-only placeholder. Sees own team and achievements. Cannot edit profile. |
+
+**Role resolution priority:** If a user has multiple roles (e.g., `["team_lead", "editor"]`), the highest-privilege role wins for navigation. The sidebar shows the most permissive set of pages the user can access.
+
+---
+
+## 2. Navigation Structure
+
+### 2.1 System Admin Sidebar
+
+```
+Dashboard          → /admin/dashboard
+Teams              → /admin/teams
+  └─ Team Detail   → /admin/teams/:id
+Individuals        → /admin/individuals
+  └─ Profile       → /admin/individuals/:id
+Achievements       → /admin/achievements
+Locations          → /admin/locations
+Reports            → /admin/reports
+```
+
+### 2.2 Team Lead Sidebar
+
+```
+My Team            → /team/dashboard
+  ├─ Members       → /team/members
+  ├─ Achievements  → /team/achievements
+  └─ History       → /team/history
+Browse Teams       → /teams
+  └─ Team Detail   → /teams/:id  (read-only)
+My Profile         → /profile
+```
+
+### 2.3 Editor / Viewer (Direct) Sidebar
+
+```
+My Team            → /team
+Achievements       → /achievements
+My Teammates       → /team/people
+My Profile         → /profile
+```
+
+### 2.4 Non-Direct Staff Sidebar
+
+```
+My Team            → /team
+Achievements       → /achievements
+My Profile         → /profile  (read-only)
+```
+
+---
+
+## 3. Page Specifications
+
+### 3.1 Global Dashboard (`/admin/dashboard`) — Admin Only
+
+**Purpose:** Bird's-eye view of all teams, surfacing the business metrics from the requirements.
+
+**KPI Cards (top row):**
+- Total active teams
+- Total active individuals (with direct vs. non-direct split)
+- Teams with leader not co-located (count + list on click)
+- Teams with non-direct leader (count + list on click)
+- Teams with non-direct ratio > 20% (count + list on click)
+
+**Charts / Sections:**
+- Teams by region (NAM / LATAM / EU / APAC) — bar or donut chart
+- Recent achievements feed (last 30 days, across all teams)
+- Teams reporting to each senior leader — grouped list
+
+**Interactions:**
+- Click any KPI card → filtered view of the relevant teams
+- Click a team name anywhere → navigate to `/admin/teams/:id`
+
+---
+
+### 3.2 All Teams (`/admin/teams`) — Admin Only
+
+**Purpose:** Searchable, filterable table of all teams.
+
+**Table Columns:**
+- Team name
+- Home location (with region badge)
+- Leader name + co-location indicator
+- Active member count (with cap indicator: "4/5")
+- Non-direct ratio (with warning badge if > 20%)
+- Reports to (current org leader)
+
+**Filters:**
+- Region (multi-select: NAM, LATAM, EU, APAC)
+- Non-direct ratio threshold (slider or checkbox for "> 20%")
+- Leader co-location (co-located / not co-located / all)
+
+**Actions:**
+- Create Team button → modal or new page
+- Click row → `/admin/teams/:id`
+- Soft-delete (with confirmation dialog)
+
+---
+
+### 3.3 Team Detail (`/admin/teams/:id` or `/teams/:id` read-only)
+
+**Purpose:** Complete view of a single team.
+
+**Tabs:**
+1. **Overview** — Team name, home location (map pin optional), current reporting line, created date
+2. **Members** — Roster table: name, role, staff type snapshot, location, start date, status (active/departed). Admin and team lead see add/remove buttons. Shows "X/5 members" cap indicator.
+3. **Achievements** — Monthly grouped list. Admin and team lead see create/edit. Others see read-only.
+4. **History** — Timeline view of `teamHistory` events. Admin and team lead only.
+
+**Sidebar card (always visible):**
+- Leader name + avatar/initials
+- Leader co-location status
+- Leader staff type
+- Non-direct ratio gauge
+
+---
+
+### 3.4 All Individuals (`/admin/individuals`) — Admin Only
+
+**Purpose:** Search and manage all people in the system.
+
+**Table Columns:**
+- Name
+- Email
+- Primary location
+- Staff type (badge: direct / non-direct)
+- Role(s) (badges)
+- Team(s) — comma-separated list of active teams
+
+**Search:** Fuzzy search on name and email.
+
+**Filters:**
+- Staff type (direct / non-direct)
+- Role (multi-select)
+- Location (multi-select)
+
+**Actions:**
+- Create Individual button
+- Click row → `/admin/individuals/:id`
+- Soft-delete (with confirmation)
+
+---
+
+### 3.5 Individual Profile (`/admin/individuals/:id` or `/profile`)
+
+**Purpose:** View and edit personal info.
+
+**Sections:**
+1. **Header** — Avatar/initials, name, job title, email, location
+2. **Details** — Staff type, role(s), created date, last login
+3. **Team Memberships** — List of active teams with role on each team. Links to team detail.
+4. **Edit Form** (admin or own profile with editor role) — Name, email, job title, location picker, staff type (admin only), roles (admin only)
+
+**Access rules:**
+- Admin: can edit everything
+- Team lead / editor: can edit own name, email, job title, location
+- Viewer: read-only
+- Non-direct: read-only
+
+---
+
+### 3.6 All Achievements (`/admin/achievements`) — Admin Only
+
+**Purpose:** Cross-team achievement feed with full CRUD.
+
+**Layout:** Card-based feed, grouped by month (YYYY-MM).
+
+**Each Card:**
+- Achievement title + description
+- Team name (linked)
+- Impact metric (highlighted)
+- Tags (pill badges)
+- Contributors (avatar row, linked to profiles)
+- Proof link (if present)
+- Created by + date
+
+**Filters:**
+- Team (multi-select)
+- Month (date picker)
+- Tag (multi-select, populated from existing tags)
+
+---
+
+### 3.7 My Team Dashboard (`/team/dashboard`) — Team Lead
+
+**Purpose:** Focused view of the lead's own team.
+
+**KPI Cards:**
+- Active members (X/5 cap)
+- Non-direct ratio (with gauge)
+- Achievements this month (count)
+- Leader co-location status
+
+**Sections:**
+- Quick member roster (with manage link)
+- Recent achievements (last 3)
+- Current reporting line
+
+---
+
+### 3.8 Manage Members (`/team/members`) — Team Lead
+
+**Purpose:** Add/remove members, assign delegate.
+
+**Table:** Same as team detail members tab but with action buttons.
+
+**Actions:**
+- Add Member — search individuals, select, confirm. Shows cap warning if at 4/5.
+- Remove Member — sets endDate, writes teamHistory event.
+- Assign Delegate — select from current members.
+- Cap indicator at top: "4/5 members — 1 slot remaining"
+
+**Validation messages:**
+- "This team already has 5 active members" (blocks add)
+- "This person is already on this team" (blocks duplicate)
+- "A delegate is already assigned" (blocks second delegate)
+
+---
+
+### 3.9 Team Achievements (`/team/achievements`) — Team Lead (edit) / Members (read)
+
+**Purpose:** Manage achievements for the lead's team.
+
+**Layout:** Same card feed as admin achievements but scoped to one team.
+
+**Create Achievement Form (team lead only):**
+- Title (required)
+- Description (required)
+- Achievement month (YYYY-MM picker, defaults to current month)
+- Impact metric
+- Tags (comma-separated or tag picker)
+- Contributors (multi-select from team members + search all individuals for cross-team contributors)
+- Proof link
+
+---
+
+### 3.10 Achievements Feed (`/achievements`) — Editor / Viewer / Non-Direct
+
+**Purpose:** Read-only achievements for motivation and visibility.
+
+**Content:**
+- **Own team achievements** — all achievements for teams the user belongs to
+- **Shared achievements** — achievements from other teams where at least one contributor is also a member of the user's team. This creates a natural cross-team visibility based on overlapping people, not arbitrary broadcast.
+
+**Layout:** Card feed, grouped by month. Team name badge on each card distinguishes own team vs. shared.
+
+**Filter:** Month picker, own team only vs. all visible.
+
+---
+
+### 3.11 My Teammates (`/team/people`) — Editor / Viewer
+
+**Purpose:** See who's on the team.
+
+**Layout:** Card grid (not table — more personal/visual feel).
+
+**Each Card:**
+- Initials avatar
+- Name
+- Job title
+- Role on team (Member / Team Leader / Delegate)
+- Location + region badge
+- Staff type badge
+
+Click → mini profile modal (name, email, location, teams — read-only).
+
+---
+
+### 3.12 Locations (`/admin/locations`) — Admin Only
+
+**Purpose:** Manage the controlled list of office locations.
+
+**Table Columns:** Name, city, country, region, timezone.
+
+**Actions:** Create, edit, soft-delete. Region is a dropdown (NAM/LATAM/EU/APAC).
+
+---
+
+### 3.13 Reports (`/admin/reports`) — Admin Only
+
+**Purpose:** Answer the business questions from the requirements.
+
+**Pre-built report cards:**
+
+1. **Teams by region** — Count + list per region
+2. **Leader co-location** — Which teams have their leader in a different location than the team home
+3. **Leader staff type** — Which teams have a non-direct leader
+4. **Non-direct ratio** — Teams sorted by ratio, flagging those above 20%
+5. **Reporting line summary** — Teams grouped by who they report to
+6. **Multi-team members** — Individuals active on more than one team
+
+Each report is a collapsible section or tab. Data is derived from the existing collections (no separate reporting tables).
+
+---
+
+## 4. Shared UI Components
+
+These React components are reused across multiple pages:
+
+| Component | Used In | Notes |
+|-----------|---------|-------|
+| `<TeamCard>` | Dashboard, team list, browse teams | Compact team summary with KPI badges |
+| `<MemberRow>` | Team detail, manage members | Name, role, staff type, location, actions |
+| `<AchievementCard>` | All achievement views | Title, description, impact, tags, contributors |
+| `<ProfileHeader>` | Individual profile, my profile | Avatar, name, title, location |
+| `<KPICard>` | Dashboards | Label + big number + optional delta |
+| `<RatioBadge>` | Team cards, reports | Colored badge showing non-direct ratio |
+| `<LocationBadge>` | Throughout | Region-colored pill with city name |
+| `<CapIndicator>` | Manage members, team detail | "4/5 members" progress indicator |
+| `<MonthPicker>` | Achievement forms, filters | YYYY-MM constrained date picker |
+| `<RoleGuard>` | Route wrapper | Checks user roles, redirects if unauthorized |
+
+---
+
+## 5. Authentication Flow
+
+```
+/login          → Email + password form
+                → On success, store JWT in memory (not localStorage)
+                → Redirect based on highest role:
+                     system_admin → /admin/dashboard
+                     team_lead    → /team/dashboard
+                     editor/viewer → /team
+                     non-direct   → /team
+/logout         → Clear token, redirect to /login
+```
+
+**Session:** JWT with role claims. The backend validates the token on every API request and checks role permissions. The frontend uses the token's role claims to conditionally render UI elements (show/hide buttons, enable/disable forms) but the backend is the source of truth for access control.
+
+---
+
+## 6. Responsive Behavior
+
+- **Desktop (≥ 1024px):** Sidebar + main content area. Tables show all columns.
+- **Tablet (768–1023px):** Collapsible sidebar (hamburger). Tables hide less-critical columns.
+- **Mobile (< 768px):** Bottom navigation bar replaces sidebar. Card layouts stack vertically. Tables convert to card lists.
+
+Material UI's `useMediaQuery` and `Grid` handle breakpoints. React Responsive provides additional device-aware rendering.
+
+---
+
+## 7. Key Frontend Routes Summary
+
+| Route | Component | Roles |
+|-------|-----------|-------|
+| `/login` | LoginPage | Public |
+| `/admin/dashboard` | AdminDashboard | system_admin |
+| `/admin/teams` | AdminTeamList | system_admin |
+| `/admin/teams/:id` | AdminTeamDetail | system_admin |
+| `/admin/individuals` | AdminIndividualList | system_admin |
+| `/admin/individuals/:id` | AdminIndividualProfile | system_admin |
+| `/admin/achievements` | AdminAchievementFeed | system_admin |
+| `/admin/locations` | AdminLocationList | system_admin |
+| `/admin/reports` | AdminReports | system_admin |
+| `/team/dashboard` | TeamLeadDashboard | team_lead |
+| `/team/members` | ManageMembers | team_lead |
+| `/team/achievements` | TeamAchievements | team_lead, editor, viewer, non-direct |
+| `/team/history` | TeamHistory | team_lead |
+| `/team` | MyTeam | editor, viewer, non-direct |
+| `/team/people` | MyTeammates | editor, viewer |
+| `/teams` | BrowseTeams | team_lead |
+| `/teams/:id` | TeamDetailReadOnly | team_lead |
+| `/achievements` | AchievementFeed | editor, viewer, non-direct |
+| `/profile` | MyProfile | all authenticated |
