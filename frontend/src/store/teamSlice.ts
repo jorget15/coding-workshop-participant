@@ -134,7 +134,8 @@ export const fetchLocationsAsync = createAsyncThunk(
   'teams/fetchLocations',
   async (_, { rejectWithValue }) => {
     try {
-      const res = await api.get('/locations')
+      // Locations are served by the metadata Lambda → /api/metadata/locations via proxy
+      const res = await api.get('/metadata/locations')
       return res.data as Location[]
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } }
@@ -173,7 +174,19 @@ export const createAchievementAsync = createAsyncThunk(
 const teamSlice = createSlice({
   name: 'teams',
   initialState,
-  reducers: {},
+  reducers: {
+    seedMockData(state, action: import('@reduxjs/toolkit').PayloadAction<{
+      teams?: Team[]
+      individuals?: Individual[]
+      locations?: Location[]
+      achievements?: Achievement[]
+    }>) {
+      if (action.payload.teams)        state.teams        = action.payload.teams
+      if (action.payload.individuals)  state.individuals  = action.payload.individuals
+      if (action.payload.locations)    state.locations    = action.payload.locations
+      if (action.payload.achievements) state.achievements = action.payload.achievements
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchTeamsAsync.pending,       (state) => { state.loading = true; state.error = null })
@@ -192,4 +205,5 @@ const teamSlice = createSlice({
   },
 })
 
+export const { seedMockData } = teamSlice.actions
 export default teamSlice.reducer

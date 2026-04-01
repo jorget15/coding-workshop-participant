@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import AppLayout from './components/AppLayout'
+import DevRoleSwitcher from './components/DevRoleSwitcher'
 import ProtectedRoute from './components/ProtectedRoute'
 import AdminRoute from './components/AdminRoute'
 
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="/*"     element={<AuthenticatedApp />} />
       </Routes>
       <ToastContainer position="top-right" theme="light" autoClose={3000} />
+      <DevRoleSwitcher />
     </BrowserRouter>
   )
 }

@@ -63,9 +63,12 @@ const server = http.createServer((req, res) => {
   }
 
   const endpointName = pathParts[1];
-  const targetUrl = endpoints[endpointName] + (parsedUrl.search || '');
 
-  if (!targetUrl) {
+  // Strip only the /api prefix; forward the full service path to the Lambda.
+  // e.g. /api/teams/team_001?foo=1 -> endpointName='teams', servicePath='/teams/team_001'
+  const servicePath = '/' + pathParts.slice(1).join('/') + (parsedUrl.search || '');
+
+  if (!endpoints[endpointName]) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       error: `Unknown endpoint: ${endpointName}`,
@@ -74,10 +77,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  console.log(`${req.method} /api/${endpointName} -> ${targetUrl}`);
+  console.log(`${req.method} /api/${endpointName}${servicePath} -> ${endpoints[endpointName]}`);
 
-  // Parse target URL
-  const target = url.parse(targetUrl);
+  // Parse target URL (used only for hostname/port resolution)
+  const target = url.parse(endpoints[endpointName]);
   const protocol = target.protocol === 'https:' ? https : http;
 
   // Forward request - strip all CORS-related and browser headers
@@ -94,13 +97,15 @@ const server = http.createServer((req, res) => {
   const options = {
     hostname: target.hostname,
     port: target.port,
-    path: target.path,
+    path: servicePath,
     method: req.method,
     headers: {
       'accept': headers.accept || 'application/json',
       'content-type': headers['content-type'] || 'application/json',
       'user-agent': headers['user-agent'] || 'proxy-server',
-      'host': target.host
+      'host': target.host,
+      // Forward JWT so Lambda auth middleware can verify the caller
+      ...(headers.authorization ? { 'authorization': headers.authorization } : {}),
     }
   };
 

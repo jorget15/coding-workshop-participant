@@ -1,5 +1,7 @@
 """
-Achievements router — CRUD for the `achievements` collection.
+Achievements Lambda — standalone FastAPI app for the ``achievements`` service.
+
+Lambda URL: set ACHIEVEMENTS_LAMBDA_URL in the frontend .env.local.
 
 Business rules enforced here:
     - Achievements may be scoped to a team (teamId set) or org-wide (teamId null).
@@ -7,15 +9,59 @@ Business rules enforced here:
     - Only system_admin and the relevant team_lead may create/edit achievements.
     - No hard deletes — achievements are a permanent audit log.
 
-Dependencies:
-    - Motor async DocumentDB client (injected via FastAPI Depends)
-    - JWT auth dependency to identify the calling user and their role
+Environment variables:
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
+    DB_NAME           - Database name (default: acme_team_mgmt).
+    JWT_SECRET        - Secret used to verify Bearer tokens.
+    JWT_ALGORITHM     - JWT algorithm (default: HS256).
+    ALLOWED_ORIGINS   - Comma-separated CORS origins.
 """
 
+import os
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from bson import ObjectId
+from bson.errors import InvalidId
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
+
+from shared.auth import CurrentUser, get_current_user, require_role
+from shared.db import get_db
+
+
+def _doc(d: dict) -> dict:
+    """Serialize ObjectId _id to string for JSON responses."""
+    if d and "_id" in d:
+        d["_id"] = str(d["_id"])
+    return d
+
+
+def _oid(value: str) -> ObjectId:
+    try:
+        return ObjectId(value)
+    except (InvalidId, Exception):
+        raise HTTPException(status_code=400, detail=f"Invalid id format: '{value}'.")
+
+# ---------------------------------------------------------------------------
+# Standalone FastAPI app
+# ---------------------------------------------------------------------------
+app = FastAPI(
+    title="ACME Achievements Service",
+    version="1.0.0",
+)
+
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 router = APIRouter()
 
@@ -34,9 +80,8 @@ class AchievementCreate(BaseModel):
         description="Leave null for org-wide / bounty-style achievements.",
     )
     awarded_to: list[str] = Field(
-        ...,
-        min_length=1,
-        description="List of individual _id values receiving this achievement.",
+        default_factory=list,
+        description="List of individual _id values receiving this achievement. Empty for org-wide achievements.",
     )
     achievement_date: Optional[str] = Field(
         default=None,
@@ -56,66 +101,131 @@ class AchievementUpdate(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/")
-async def list_achievements() -> list:
-    """
-    Return achievements, optionally filtered.
-
-    TODO:
-        - Inject Motor DB client and current user.
-        - Support query params: ?team_id=, ?individual_id=, ?from_date=, ?to_date=
-        - If team_id is omitted, return all achievements the caller is allowed to see:
-              system_admin: all achievements
-              team_lead: achievements for their team(s)
-              member: only their own (awarded_to contains their individual_id)
-        - Sort by achievementDate descending.
-        - Return paginated results.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+@router.get("")
+async def list_achievements(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    team_id: Optional[str] = None,
+    individual_id: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> list:
+    """Return achievements filtered by role scope and optional query params."""
+    query: dict = {}
+    if user.role == "team_lead":
+        query["teamId"] = user.team_id
+    elif user.role not in ("system_admin", "editor", "viewer"):
+        # members only see their own
+        query["awardedTo"] = {"$in": [user.user_id]}
+    if team_id:
+        query["teamId"] = team_id
+    if individual_id:
+        query["awardedTo"] = {"$in": [individual_id]}
+    if from_date or to_date:
+        date_filter: dict = {}
+        if from_date:
+            date_filter["$gte"] = from_date
+        if to_date:
+            date_filter["$lte"] = to_date
+        query["achievementDate"] = date_filter
+    docs = await db["achievements"].find(query).sort("achievementDate", -1).to_list(200)
+    return [_doc(d) for d in docs]
 
 
 @router.get("/{achievement_id}")
-async def get_achievement(achievement_id: str) -> dict:
-    """
-    Return a single achievement by its _id.
+async def get_achievement(
+    achievement_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Return a single achievement. Enforces visibility by role."""
+    doc = await db["achievements"].find_one({"_id": _oid(achievement_id)})
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Achievement '{achievement_id}' not found.",
+        )
+    # Visibility check — viewers/editors can see all achievements
+    is_open = user.role in ("system_admin", "viewer", "editor")
+    is_lead_of_team = user.role == "team_lead" and user.team_id == doc.get("teamId")
+    is_recipient = user.user_id in (doc.get("awardedTo") or [])
+    if not (is_open or is_lead_of_team or is_recipient):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: not awarded to you and not your team.",
+        )
+    return _doc(doc)
 
-    TODO:
-        - Inject Motor DB client and current user.
-        - Query: db.achievements.find_one({"_id": ObjectId(achievement_id)})
-        - Return 404 if not found.
-        - Enforce visibility: caller must be system_admin, the awarding team_lead,
-          or one of the individuals in the awardedTo array.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
 
-
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_achievement(payload: AchievementCreate) -> dict:
-    """
-    Record a new achievement.
-
-    TODO:
-        - Restrict to system_admin and team_lead roles.
-        - If team_id is provided, verify the team exists and the caller
-          is either system_admin or the active leader of that team.
-        - Validate all individual_ids in awarded_to exist and are active.
-        - Set createdAt: datetime.utcnow() on insert.
-        - Return the inserted document.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_achievement(
+    payload: AchievementCreate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(require_role("system_admin", "team_lead")),
+) -> dict:
+    """Record a new achievement. team_lead may only award within their own team."""
+    if payload.team_id:
+        if user.role == "team_lead" and user.team_id != payload.team_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not the active leader of this team.",
+            )
+        team = await db["teams"].find_one({"_id": _oid(payload.team_id)})
+        if not team:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{payload.team_id}' not found.")
+    # Validate all awardedTo individuals exist and are active
+    for ind_id in payload.awarded_to:
+        ind = await db["individuals"].find_one({"_id": _oid(ind_id), "isActive": True})
+        if not ind:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Individual '{ind_id}' not found or inactive.",
+            )
+    doc = {
+        "title": payload.title,
+        "description": payload.description,
+        "teamId": payload.team_id,
+        "awardedTo": payload.awarded_to,
+        "achievementDate": payload.achievement_date or datetime.now(timezone.utc).date().isoformat(),
+        "createdAt": datetime.now(timezone.utc),
+        "createdBy": user.user_id,
+    }
+    result = await db["achievements"].insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return _doc(doc)
 
 
 @router.patch("/{achievement_id}")
-async def update_achievement(achievement_id: str, payload: AchievementUpdate) -> dict:
-    """
-    Update an achievement's metadata (title, description, date).
+async def update_achievement(
+    achievement_id: str,
+    payload: AchievementUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(require_role("system_admin", "team_lead")),
+) -> dict:
+    """Update an achievement's metadata. awardedTo is intentionally not patchable."""
+    oid = _oid(achievement_id)
+    doc = await db["achievements"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Achievement '{achievement_id}' not found.")
+    if user.role == "team_lead" and doc.get("createdBy") != user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the creating team_lead or system_admin may edit this achievement.",
+        )
+    updates = payload.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
+    field_map = {"achievement_date": "achievementDate"}
+    set_dict = {field_map.get(k, k): v for k, v in updates.items()}
+    await db["achievements"].update_one({"_id": oid}, {"$set": set_dict})
+    doc = await db["achievements"].find_one({"_id": oid})
+    return _doc(doc)
 
-    TODO:
-        - Restrict to system_admin and the team_lead who created it.
-        - awardedTo is intentionally NOT patchable here to preserve audit integrity;
-          create a new achievement instead.
-        - Build a $set dict from non-None payload fields.
-        - Return the updated document.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+
+# ---------------------------------------------------------------------------
+# Mount router and expose Mangum Lambda handler
+# ---------------------------------------------------------------------------
+app.include_router(router, prefix="/achievements", tags=["achievements"])
+
+handler = Mangum(app)
 

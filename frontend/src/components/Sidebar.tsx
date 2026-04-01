@@ -41,7 +41,7 @@ const NON_DIRECT_LINKS: NavItem[] = [
   { label: 'My Profile',   to: '/profile' },
 ]
 
-function linksForRole(role: Role | undefined): NavItem[] {
+function linksForRole(role: Role | null | undefined): NavItem[] {
   switch (role) {
     case 'system_admin': return ADMIN_LINKS
     case 'team_lead':    return TEAM_LEAD_LINKS

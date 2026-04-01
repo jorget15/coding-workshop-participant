@@ -27,3 +27,10 @@ variable "aws_mongo_host" {
   type        = string
   default     = null
 }
+
+variable "aws_jwt_secret" {
+  description = "HMAC secret used to sign JWTs. Override in a .tfvars file for production — never commit the real value."
+  type        = string
+  default     = "local-dev-secret-change-in-prod"
+  sensitive   = true
+}

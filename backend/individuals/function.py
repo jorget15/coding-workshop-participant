@@ -1,5 +1,7 @@
 """
-Individuals router — CRUD for the `individuals` collection.
+Individuals Lambda — standalone FastAPI app for the ``individuals`` service.
+
+Lambda URL: set INDIVIDUALS_LAMBDA_URL in the frontend .env.local.
 
 Business rules enforced here:
     [R4]  An individual can only be soft-deleted (isActive: false); no hard deletes.
@@ -7,15 +9,68 @@ Business rules enforced here:
     [R10] A Team Leader cannot simultaneously be a member of another team
           (enforced at the teams layer but validated here on profile updates).
 
-Dependencies:
-    - Motor async DocumentDB client (injected via FastAPI Depends)
-    - JWT auth dependency to identify the calling user and their role
+Environment variables:
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
+    DB_NAME           - Database name (default: acme_team_mgmt).
+    JWT_SECRET        - Secret used to verify Bearer tokens.
+    JWT_ALGORITHM     - JWT algorithm (default: HS256).
+    S3_BUCKET         - S3 bucket name for profile pictures.
+    ALLOWED_ORIGINS   - Comma-separated CORS origins.
 """
 
+import os
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import boto3
+from bson import ObjectId
+from bson.errors import InvalidId
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
+from motor.motor_asyncio import AsyncIOMotorDatabase
+import bcrypt as _bcrypt
 from pydantic import BaseModel, EmailStr, Field
+
+from shared.auth import CurrentUser, get_current_user, require_role
+from shared.db import get_db
+
+
+def _hash_password(plain: str) -> str:
+    """Hash a plaintext password with bcrypt. Truncates to 72 bytes (bcrypt limit)."""
+    return _bcrypt.hashpw(plain.encode("utf-8")[:72], _bcrypt.gensalt()).decode("utf-8")
+
+
+def _doc(d: dict) -> dict:
+    """Serialize ObjectId _id to string for JSON responses."""
+    if d and "_id" in d:
+        d["_id"] = str(d["_id"])
+    return d
+
+
+def _oid(individual_id: str) -> ObjectId:
+    """Parse a string to ObjectId, raising 400 on invalid format."""
+    try:
+        return ObjectId(individual_id)
+    except (InvalidId, Exception):
+        raise HTTPException(status_code=400, detail=f"Invalid id format: '{individual_id}'.")
+
+# ---------------------------------------------------------------------------
+# Standalone FastAPI app (each Lambda gets its own app + Mangum handler)
+# ---------------------------------------------------------------------------
+app = FastAPI(
+    title="ACME Individuals Service",
+    version="1.0.0",
+)
+
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 router = APIRouter()
 
@@ -61,99 +116,182 @@ class IndividualUpdate(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/")
-async def list_individuals() -> list:
-    """
-    Return all active individuals (isActive: true).
-
-    TODO:
-        - Inject Motor DB client via Depends(get_db).
-        - Inject current user via Depends(get_current_user) and enforce
-          that only system_admin or team_lead roles may access this list.
-        - Query: db.individuals.find({"isActive": True}, {"passwordHash": 0})
-        - Support optional query params: ?location_id=, ?staff_type=, ?search=
-        - Return paginated results (limit/offset or cursor-based).
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+@router.get("")
+async def list_individuals(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    location_id: Optional[str] = None,
+    staff_type: Optional[str] = None,
+    search: Optional[str] = None,
+) -> list:
+    """Return all active individuals. All authenticated users may list (read-only)."""
+    query: dict = {"isActive": True}
+    if location_id:
+        query["locationId"] = location_id
+    if staff_type:
+        query["staffType"] = staff_type
+    if search:
+        query["$or"] = [
+            {"firstName": {"$regex": search, "$options": "i"}},
+            {"lastName": {"$regex": search, "$options": "i"}},
+            {"email": {"$regex": search, "$options": "i"}},
+        ]
+    docs = await db["individuals"].find(query, {"passwordHash": 0}).to_list(200)
+    return [_doc(d) for d in docs]
 
 
 @router.get("/{individual_id}")
-async def get_individual(individual_id: str) -> dict:
-    """
-    Return a single individual by their _id.
+async def get_individual(
+    individual_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Return a single individual. Users may only view their own profile unless admin/lead."""
+    if user.role not in ("system_admin", "team_lead") and user.user_id != individual_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you may only view your own profile.",
+        )
+    doc = await db["individuals"].find_one(
+        {"_id": _oid(individual_id), "isActive": True}, {"passwordHash": 0}
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Individual '{individual_id}' not found or inactive.",
+        )
+    return _doc(doc)
 
-    TODO:
-        - Inject Motor DB client and current user.
-        - Users may only fetch their own profile unless they are system_admin or team_lead.
-        - Query: db.individuals.find_one({"_id": ObjectId(individual_id), "isActive": True})
-        - Exclude passwordHash from the response.
-        - Return 404 if not found or isActive is false.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
 
-
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_individual(payload: IndividualCreate) -> dict:
-    """
-    Create a new individual.
-
-    TODO:
-        - Restrict to system_admin role only.
-        - Hash payload.password with passlib[bcrypt] before storing.
-        - Check for duplicate email before inserting.
-        - Set isActive: True, createdAt: datetime.utcnow() on insert.
-        - Return the inserted document (without passwordHash).
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("system_admin"))])
+async def create_individual(
+    payload: IndividualCreate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Create a new individual (system_admin only)."""
+    existing = await db["individuals"].find_one({"email": payload.email})
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Individual with email '{payload.email}' already exists.",
+        )
+    doc = {
+        "firstName": payload.first_name,
+        "lastName": payload.last_name,
+        "email": payload.email,
+        "jobTitle": payload.job_title,
+        "staffType": payload.staff_type,
+        "locationId": payload.location_id,
+        "profilePicture": payload.profile_picture or "avatars/defaults/default_01.png",
+        "passwordHash": _hash_password(payload.password),
+        "isActive": True,
+        "createdAt": datetime.now(timezone.utc),
+    }
+    result = await db["individuals"].insert_one(doc)
+    doc["_id"] = result.inserted_id
+    doc.pop("passwordHash", None)
+    return _doc(doc)
 
 
 @router.patch("/{individual_id}")
-async def update_individual(individual_id: str, payload: IndividualUpdate) -> dict:
-    """
-    Partially update an individual's profile.
+async def update_individual(
+    individual_id: str,
+    payload: IndividualUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Partially update an individual's profile (own profile or system_admin)."""
+    if user.role != "system_admin" and user.user_id != individual_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you may only update your own profile.",
+        )
+    oid = _oid(individual_id)
+    updates = payload.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
+    # Validate profile_picture is an S3 key, not a full URL
+    if "profile_picture" in updates and updates["profile_picture"].startswith("http"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="profile_picture must be an S3 object key, not a URL. Upload via presigned URL first.",
+        )
+    field_map = {
+        "first_name": "firstName",
+        "last_name": "lastName",
+        "job_title": "jobTitle",
+        "staff_type": "staffType",
+        "location_id": "locationId",
+        "profile_picture": "profilePicture",
+    }
+    set_dict = {field_map.get(k, k): v for k, v in updates.items()}
+    result = await db["individuals"].update_one(
+        {"_id": oid, "isActive": True}, {"$set": set_dict}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Individual '{individual_id}' not found or inactive.",
+        )
+    doc = await db["individuals"].find_one({"_id": oid}, {"passwordHash": 0})
+    return _doc(doc)
 
-    TODO:
-        - Allow users to update their own profile; system_admin can update anyone.
-        - If payload includes a new profile_picture key, validate it is a valid
-          S3 object key (not a full URL) — the UI should upload directly to S3
-          via presigned URL first, then PATCH with the resulting key.
-        - Build a $set dict from only the non-None payload fields.
-        - Return the updated document (without passwordHash).
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+
+@router.delete("/{individual_id}", dependencies=[Depends(require_role("system_admin"))])
+async def deactivate_individual(
+    individual_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Soft-delete an individual (R4 — no hard deletes). Blocks if active on a team."""
+    oid = _oid(individual_id)
+    # R4: block if active on any team
+    active_team = await db["teams"].find_one({
+        "status": {"$ne": "Closed"},
+        "members": {"$elemMatch": {"individualId": individual_id, "endDate": None}},
+    })
+    if active_team:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"R4: individual '{individual_id}' is an active team member and cannot be deactivated.",
+        )
+    result = await db["individuals"].update_one({"_id": oid}, {"$set": {"isActive": False}})
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Individual '{individual_id}' not found.",
+        )
+    doc = await db["individuals"].find_one({"_id": oid}, {"passwordHash": 0})
+    return _doc(doc)
 
 
-@router.delete("/{individual_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def deactivate_individual(individual_id: str) -> None:
-    """
-    Soft-delete an individual by setting isActive: false (R4 — no hard deletes).
+@router.post("/{individual_id}/avatar-upload-url")
+async def get_avatar_upload_url(
+    individual_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Return a presigned S3 PUT URL for uploading a profile picture directly to S3."""
+    if user.role != "system_admin" and user.user_id != individual_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+    bucket = os.environ.get("S3_BUCKET")
+    if not bucket:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="S3_BUCKET environment variable not configured.",
+        )
+    s3_key = f"avatars/{individual_id}.jpg"
+    s3 = boto3.client("s3")
+    upload_url = s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": bucket, "Key": s3_key, "ContentType": "image/jpeg"},
+        ExpiresIn=300,
+    )
+    return {"upload_url": upload_url, "s3_key": s3_key}
 
-    TODO:
-        - Restrict to system_admin role only.
-        - Check the individual is not currently an active member of any team
-          before deactivating. If they are, return 409 Conflict with details.
-        - Update: db.individuals.update_one({"_id": ...}, {"$set": {"isActive": False}})
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
 
+# ---------------------------------------------------------------------------
+# Mount router and expose Mangum Lambda handler
+# ---------------------------------------------------------------------------
+app.include_router(router, prefix="/individuals", tags=["individuals"])
 
-@router.get("/{individual_id}/profile-picture-upload-url")
-async def get_profile_picture_upload_url(individual_id: str) -> dict:
-    """
-    Return a short-lived S3 presigned PUT URL so the client can upload
-    a profile picture directly to S3 without proxying through Lambda.
-
-    TODO:
-        - Restrict to the individual themselves or system_admin.
-        - Use boto3 S3 client to generate a presigned URL:
-              s3.generate_presigned_url(
-                  "put_object",
-                  Params={"Bucket": S3_BUCKET, "Key": f"avatars/{individual_id}.jpg"},
-                  ExpiresIn=300,
-              )
-        - Return {"upload_url": "...", "key": "avatars/{individual_id}.jpg"}.
-        - After upload completes the client should PATCH the individual's
-          profile_picture field with the returned key.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet.")
+handler = Mangum(app)
 

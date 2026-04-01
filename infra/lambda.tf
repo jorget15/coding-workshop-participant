@@ -16,11 +16,20 @@ module "lambda" {
   s3_bucket       = data.aws_caller_identity.this.id != "000000000000" ? var.aws_bucket : null
   s3_prefix       = data.aws_caller_identity.this.id != "000000000000" ? format("lambda/%s/%s/", local.app_id, each.value.name) : null
 
-  source_path = [{
-    path             = try(each.value.path, null)
-    patterns         = try(each.value.patterns, null)
-    pip_requirements = try(each.value.pip_requirements, null)
-  }]
+  # Python Lambdas include the shared/ layer under the "shared" prefix so that
+  # `from shared.db import ...` resolves correctly inside the Lambda container.
+  source_path = concat(
+    [{
+      path             = try(each.value.path, null)
+      patterns         = try(each.value.patterns, null)
+      pip_requirements = try(each.value.pip_requirements, null)
+    }],
+    try(each.value.shared_path, null) != null ? [{
+      path          = each.value.shared_path
+      prefix_in_zip = "shared"
+      patterns      = ["!__pycache__/.*", "!\\.*"]
+    }] : []
+  )
 
   vpc_security_group_ids = data.aws_security_groups.this.ids
   vpc_subnet_ids         = local.public_subnet_ids

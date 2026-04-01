@@ -45,8 +45,8 @@ locals {
       handler          = "function.handler"
       path             = abspath(format("%s/../backend/%s", path.module, name))
       patterns         = ["!__pycache__/.*", "!\\..*"]
-      pip_requirements = true
-    }
+      pip_requirements = true      # Shared layer: bundled into every Python Lambda so `from shared.x import ...` resolves
+      shared_path      = abspath(format("%s/../backend/shared", path.module))    }
   }
   function_names = merge(local.java_names, local.python_names)
   function_origins = [
@@ -62,10 +62,14 @@ locals {
     APP_NAME      = format("%s-%s", var.aws_project, local.app_id)
     APP_ROLE      = format("arn:%s:iam::%s:role/%s-assume-%s", data.aws_partition.this.partition, data.aws_caller_identity.this.account_id, var.aws_project, local.app_id)
     IS_LOCAL      = data.aws_caller_identity.this.id == "000000000000" ? "true" : "false"
+    # MongoDB / DocumentDB connection
     MONGO_HOST    = data.aws_caller_identity.this.id == "000000000000" ? coalesce(try(trimspace(var.aws_mongo_host), ""), "host.docker.internal") : element(aws_docdb_cluster.this.*.endpoint, 0)
     MONGO_PORT    = data.aws_caller_identity.this.id == "000000000000" ? "27017" : element(aws_docdb_cluster.this.*.port, 0)
     MONGO_USER    = data.aws_caller_identity.this.id == "000000000000" ? "mongo" : element(aws_docdb_cluster.this.*.master_username, 0)
     MONGO_PASS    = data.aws_caller_identity.this.id == "000000000000" ? "mongo123!" : element(aws_docdb_cluster.this.*.master_password, 0)
+    DB_NAME       = "acme_team_mgmt"
+    # JWT signing — override aws_jwt_secret in tfvars for production
+    JWT_SECRET    = var.aws_jwt_secret
     POSTGRES_HOST = data.aws_caller_identity.this.id == "000000000000" ? "localhost" : element(aws_rds_cluster.this.*.endpoint, 0)
     POSTGRES_PORT = data.aws_caller_identity.this.id == "000000000000" ? "5432" : element(aws_rds_cluster.this.*.port, 0)
     POSTGRES_NAME = data.aws_caller_identity.this.id == "000000000000" ? "postgres" : element(aws_rds_cluster.this.*.database_name, 0)

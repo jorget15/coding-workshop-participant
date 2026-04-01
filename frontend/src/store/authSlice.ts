@@ -13,10 +13,16 @@ export interface AuthUser {
   teamId:    string | null  // the team this user belongs to (null for system_admin)
 }
 
-interface AuthState extends Partial<AuthUser> {
+interface AuthState {
   isAuthenticated: boolean
-  loading: boolean
-  error:   string | null
+  loading:   boolean
+  error:     string | null
+  userId:    string | null
+  username:  string | null
+  email:     string | null
+  role:      Role | null
+  staffType: 'direct' | 'non-direct' | null
+  teamId:    string | null
 }
 
 const initialState: AuthState = {
@@ -44,6 +50,8 @@ export const loginAsync = createAsyncThunk(
   }
 )
 
+export interface PersonaPayload extends AuthUser {}
+
 const authSlice = createSlice({
   name: 'auth',
   initialState,
@@ -54,6 +62,21 @@ const authSlice = createSlice({
       state.username = null
       state.role     = null
       state.error    = null
+      localStorage.removeItem('acme_token')
+    },
+    /** Dev-only: swap the active persona without a real login. */
+    switchPersona(state, action: { payload: PersonaPayload }) {
+      const p = action.payload
+      state.isAuthenticated = true
+      state.userId    = p.userId
+      state.username  = p.username
+      state.email     = p.email
+      state.role      = p.role
+      state.staffType = p.staffType
+      state.teamId    = p.teamId   // string | null — matches AuthUser
+      state.error     = null
+      // Dev personas don't have real JWTs — clear any stored token
+      localStorage.removeItem('acme_token')
     },
   },
   extraReducers: (builder) => {
@@ -71,6 +94,10 @@ const authSlice = createSlice({
         state.role            = action.payload.role
         state.staffType       = action.payload.staffType
         state.teamId          = action.payload.teamId ?? null
+        // Persist JWT so axios interceptor can attach it to every request
+        if (action.payload.token) {
+          localStorage.setItem('acme_token', action.payload.token)
+        }
       })
       .addCase(loginAsync.rejected, (state, action) => {
         state.loading = false
@@ -79,5 +106,5 @@ const authSlice = createSlice({
   },
 })
 
-export const { logout } = authSlice.actions
+export const { logout, switchPersona } = authSlice.actions
 export default authSlice.reducer
