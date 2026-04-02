@@ -23,51 +23,22 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from bson import ObjectId
-from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, status
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
+from shared import create_app, serialize_doc, oid
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
 from shared.logging import get_logger
 
 logger = get_logger("teams")
 
-
-def _doc(d: dict) -> dict:
-    """Serialize ObjectId _id to string for JSON responses."""
-    if d and "_id" in d:
-        d["_id"] = str(d["_id"])
-    return d
-
-
-def _oid(team_id: str) -> ObjectId:
-    """Parse a string to ObjectId, raising 400 on invalid format."""
-    try:
-        return ObjectId(team_id)
-    except (InvalidId, Exception):
-        raise HTTPException(status_code=400, detail=f"Invalid id format: '{team_id}'.")
-
 # ---------------------------------------------------------------------------
 # Standalone FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="ACME Teams Service",
-    version="1.0.0",
-)
-
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = create_app("ACME Teams Service")
 
 router = APIRouter()
 
@@ -119,7 +90,7 @@ async def list_teams(
     if search:
         query["teamName"] = {"$regex": search, "$options": "i"}
     docs = await db["teams"].find(query).to_list(200)
-    return [_doc(d) for d in docs]
+    return [serialize_doc(d) for d in docs]
 
 
 @router.get("/{team_id}")
@@ -135,7 +106,7 @@ async def get_team(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Team '{team_id}' not found.",
         )
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("system_admin"))])
@@ -160,7 +131,7 @@ async def create_team(
     result = await db["teams"].insert_one(doc)
     doc["_id"] = result.inserted_id
     logger.info("Created team", extra={"team_id": str(result.inserted_id), "team_name": payload.team_name})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.patch("/{team_id}", dependencies=[Depends(require_role("system_admin"))])
@@ -180,7 +151,7 @@ async def update_team(
     if result.matched_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{team_id}' not found.")
     doc = await db["teams"].find_one({"_id": team_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_role("system_admin"))])
@@ -273,7 +244,7 @@ async def add_member(
     })
     logger.info("Added member to team", extra={"team_id": team_id, "person_id": payload.person_id, "role": payload.member_role})
     doc = await db["teams"].find_one({"_id": team_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.delete("/{team_id}/members/{person_id}", status_code=status.HTTP_204_NO_CONTENT)

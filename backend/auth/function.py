@@ -17,29 +17,19 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import hashlib
-import secrets
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, status
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
+from shared import create_app, hash_password, verify_password
 from shared.db import get_db
 from shared.logging import get_logger
 
 logger = get_logger("auth-lambda")
 
-app = FastAPI(title="ACME Auth Service")
+app = create_app("ACME Auth Service")
 router = APIRouter()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # ---------------------------------------------------------------------------
@@ -67,28 +57,6 @@ class RefreshRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _hash(password: str) -> str:
-    """Hash a password using PBKDF2-SHA256 (stdlib — no binary deps)."""
-    salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 260000)
-    return f"$pbkdf2-sha256${salt}${dk.hex()}"
-
-
-def _verify_password(plain: str, stored_hash: str) -> bool:
-    """Verify a password against a $pbkdf2-sha256$salt$hash string."""
-    try:
-        # Format: $pbkdf2-sha256$<salt>$<dk_hex>
-        # split("$") → ['', 'pbkdf2-sha256', salt, dk_hex]
-        parts = stored_hash.split("$")
-        if len(parts) != 4:
-            return False
-        _, _algo, salt, dk_hex = parts
-        dk = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt.encode("utf-8"), 260000)
-        return secrets.compare_digest(dk.hex(), dk_hex)
-    except (ValueError, AttributeError):
-        return False
-
 
 def _sign_token(payload: dict) -> str:
     """Sign a JWT with the configured secret and expiry."""
@@ -144,7 +112,7 @@ async def login(
         logger.warning("Login failed: no password hash", extra={"email": body.email})
         raise _invalid
 
-    if not _verify_password(body.password, hashed):
+    if not verify_password(body.password, hashed):
         logger.warning("Login failed: wrong password", extra={"email": body.email})
         raise _invalid
 
@@ -268,199 +236,429 @@ async def refresh(
 # ---------------------------------------------------------------------------
 
 _SEED_USERS = [
+    # ── Senior Leadership (system_admin) ──────────────────────────────
     {
-        "_id": "ind_001",
-        "personName": "Alice Smith",
-        "email": "alice@acme.com",
-        "jobTitle": "Engineering Manager",
-        "staffType": "direct",
-        "primaryLocation": "loc_hq",
-        "roles": ["system_admin"],
+        "_id": "ind_001", "personName": "Jorge taban", "email": "alice@acme.com",
+        "jobTitle": "VP of Engineering", "staffType": "direct",
+        "primaryLocation": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "isDeleted": False,
-        "deletedAt": None,
-        "auth": {"hashedPassword": ""},  # filled at runtime
-        "_password": "Admin1234!",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Admin1234!",
     },
     {
-        "_id": "ind_002",
-        "personName": "Bob Jones",
-        "email": "bob@acme.com",
-        "jobTitle": "Team Lead",
-        "staffType": "direct",
-        "primaryLocation": "loc_hq",
-        "roles": ["team_lead"],
+        "_id": "ind_002", "personName": "Raj Patel", "email": "raj@acme.com",
+        "jobTitle": "CTO", "staffType": "direct",
+        "primaryLocation": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "isDeleted": False,
-        "deletedAt": None,
-        "auth": {"hashedPassword": ""},
-        "_password": "Lead1234!",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Admin1234!",
+    },
+    # ── Team Leaders (one per team, co-located per R11) ──────────────
+    {
+        "_id": "ind_003", "personName": "Niel Escobar", "email": "bob@acme.com",
+        "jobTitle": "Senior Platform Engineer", "staffType": "direct",
+        "primaryLocation": "loc_london_cw", "roles": ["team_lead"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
     },
     {
-        "_id": "ind_003",
-        "personName": "Carol White",
-        "email": "carol@acme.com",
-        "jobTitle": "Senior Developer",
-        "staffType": "direct",
-        "primaryLocation": "loc_hq",
-        "roles": ["editor"],
+        "_id": "ind_004", "personName": "Maria Garcia", "email": "maria@acme.com",
+        "jobTitle": "Head of Customer Success", "staffType": "direct",
+        "primaryLocation": "loc_miami_latam", "roles": ["team_lead"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "isDeleted": False,
-        "deletedAt": None,
-        "auth": {"hashedPassword": ""},
-        "_password": "Editor1234!",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
     },
     {
-        "_id": "ind_004",
-        "personName": "Dan Brown",
-        "email": "dan@acme.com",
-        "jobTitle": "Analyst",
-        "staffType": "non-direct",
-        "primaryLocation": "loc_hq",
-        "roles": ["viewer"],
+        "_id": "ind_005", "personName": "Yuki Tanaka", "email": "yuki@acme.com",
+        "jobTitle": "Lead Data Scientist", "staffType": "direct",
+        "primaryLocation": "loc_singapore", "roles": ["team_lead"],
         "profilePicture": "avatars/defaults/default_01.png",
-        "isDeleted": False,
-        "deletedAt": None,
-        "auth": {"hashedPassword": ""},
-        "_password": "Viewer1234!",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
+    },
+    {
+        "_id": "ind_006", "personName": "Hans Mueller", "email": "hans@acme.com",
+        "jobTitle": "Head of Compliance", "staffType": "direct",
+        "primaryLocation": "loc_frankfurt", "roles": ["team_lead"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
+    },
+    {
+        "_id": "ind_007", "personName": "Priya Sharma", "email": "priya@acme.com",
+        "jobTitle": "Engineering Manager", "staffType": "direct",
+        "primaryLocation": "loc_mumbai", "roles": ["team_lead"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
+    },
+    # ── Members & cross-team contributors ─────────────────────────────
+    {
+        "_id": "ind_008", "personName": "Carol White", "email": "carol@acme.com",
+        "jobTitle": "DevOps Engineer", "staffType": "direct",
+        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_009", "personName": "Elena Russo", "email": "elena@acme.com",
+        "jobTitle": "Data Analyst", "staffType": "direct",
+        "primaryLocation": "loc_dublin", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_010", "personName": "James Okafor", "email": "james@acme.com",
+        "jobTitle": "Full Stack Developer", "staffType": "direct",
+        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_011", "personName": "Jet Chen", "email": "Jet@acme.com",
+        "jobTitle": "Cloud Architect", "staffType": "direct",
+        "primaryLocation": "loc_singapore", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_012", "personName": "Dan Brown", "email": "dan@acme.com",
+        "jobTitle": "Compliance Analyst", "staffType": "non-direct",
+        "primaryLocation": "loc_miami_latam", "roles": ["viewer"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
+    },
+    {
+        "_id": "ind_013", "personName": "Fatima Al-Rashid", "email": "fatima@acme.com",
+        "jobTitle": "Security Consultant", "staffType": "non-direct",
+        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_014", "personName": "Tom Wilson", "email": "tom@acme.com",
+        "jobTitle": "QA Lead", "staffType": "direct",
+        "primaryLocation": "loc_nyc_park", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_015", "personName": "Suki Watanabe", "email": "suki@acme.com",
+        "jobTitle": "UX Researcher", "staffType": "non-direct",
+        "primaryLocation": "loc_hong_kong", "roles": ["viewer"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
+    },
+    {
+        "_id": "ind_016", "personName": "Carlos Mendez", "email": "carlos@acme.com",
+        "jobTitle": "Backend Developer", "staffType": "direct",
+        "primaryLocation": "loc_miami_latam", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_017", "personName": "Ananya Desai", "email": "ananya@acme.com",
+        "jobTitle": "ML Engineer", "staffType": "direct",
+        "primaryLocation": "loc_mumbai", "roles": ["editor"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
+    },
+    {
+        "_id": "ind_018", "personName": "Patrick O'Brien", "email": "patrick@acme.com",
+        "jobTitle": "Regulatory Advisor", "staffType": "non-direct",
+        "primaryLocation": "loc_dublin", "roles": ["viewer"],
+        "profilePicture": "avatars/defaults/default_01.png",
+        "isDeleted": False, "deletedAt": None,
+        "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
     },
 ]
 
 _SEED_LOCATIONS = [
-    {
-        "_id": "loc_hq",
-        "name": "ACME Headquarters",
-        "city": "Miami",
-        "country": "US",
-        "region": "NAM",
-        "timezone": "America/New_York",
-    },
-    {
-        "_id": "loc_london",
-        "name": "ACME London Office",
-        "city": "London",
-        "country": "UK",
-        "region": "EU",
-        "timezone": "Europe/London",
-    },
+    # --- NAM (2) ---
+    {"_id": "loc_nyc_hq",      "name": "ACME Global HQ (388 Greenwich)", "city": "New York",  "country": "US",        "region": "NAM",   "timezone": "America/New_York"},
+    {"_id": "loc_nyc_park",    "name": "ACME Park Avenue Office",        "city": "New York",  "country": "US",        "region": "NAM",   "timezone": "America/New_York"},
+    # --- LATAM (1) ---
+    {"_id": "loc_miami_latam", "name": "ACME LATAM Hub",                 "city": "Miami",     "country": "US",        "region": "LATAM", "timezone": "America/New_York"},
+    # --- EMEA (3) ---
+    {"_id": "loc_london_cw",   "name": "ACME EMEA HQ (Canary Wharf)",    "city": "London",    "country": "UK",        "region": "EMEA",  "timezone": "Europe/London"},
+    {"_id": "loc_dublin",      "name": "ACME Europe Plc HQ",             "city": "Dublin",    "country": "Ireland",   "region": "EMEA",  "timezone": "Europe/Dublin"},
+    {"_id": "loc_frankfurt",   "name": "ACME Frankfurt Office",          "city": "Frankfurt", "country": "Germany",   "region": "EMEA",  "timezone": "Europe/Berlin"},
+    # --- APAC (4) ---
+    {"_id": "loc_hong_kong",   "name": "ACME Hong Kong HQ",              "city": "Hong Kong", "country": "HK",        "region": "APAC",  "timezone": "Asia/Hong_Kong"},
+    {"_id": "loc_singapore",   "name": "ACME Singapore Hub",             "city": "Singapore", "country": "Singapore", "region": "APAC",  "timezone": "Asia/Singapore"},
+    {"_id": "loc_mumbai",      "name": "ACME India HQ",                  "city": "Mumbai",    "country": "India",     "region": "APAC",  "timezone": "Asia/Kolkata"},
+    {"_id": "loc_sydney",      "name": "ACME Australia Office",          "city": "Sydney",    "country": "Australia", "region": "APAC",  "timezone": "Australia/Sydney"},
 ]
 
 _SEED_TEAMS = [
     {
         "_id": "team_001",
         "teamName": "Platform Engineering",
-        "description": "Core infrastructure and DevOps platform team.",
-        "primaryLocation": "loc_hq",
+        "description": "Core infrastructure, CI/CD, and DevOps platform team.",
+        "primaryLocation": "loc_london_cw",
         "members": [
-            {
-                "personId": "ind_002",
-                "personName": "Bob Jones",
-                "memberRole": "Team Leader",
-                "staffTypeSnapshot": "direct",
-                "startDate": "2025-01-15T00:00:00Z",
-                "endDate": None,
-            },
-            {
-                "personId": "ind_003",
-                "personName": "Carol White",
-                "memberRole": "Member",
-                "staffTypeSnapshot": "direct",
-                "startDate": "2025-02-01T00:00:00Z",
-                "endDate": None,
-            },
-            {
-                "personId": "ind_004",
-                "personName": "Dan Brown",
-                "memberRole": "Delegate",
-                "staffTypeSnapshot": "non-direct",
-                "startDate": "2025-03-01T00:00:00Z",
-                "endDate": None,
-            },
+            {"personId": "ind_003", "personName": "Niel Escobar",      "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-01-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_008", "personName": "Carol White",    "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_010", "personName": "James Okafor",   "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_013", "personName": "Fatima Al-Rashid","memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-03-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_014", "personName": "Tom Wilson",     "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-04-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_009", "personName": "Elena Russo",    "memberRole": "Delegate",    "staffTypeSnapshot": "direct",     "startDate": "2025-06-01T00:00:00Z", "endDate": None},
         ],
         "reportingHistory": [
-            {
-                "orgLeaderId": "ind_001",
-                "orgLeaderName": "Alice Smith",
-                "startDate": "2025-01-15T00:00:00Z",
-                "endDate": None,
-            }
+            {"orgLeaderId": "ind_001", "orgLeaderName": "Jorge taban", "startDate": "2025-01-15T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {
-                "eventType": "TEAM_CREATED",
-                "description": "Platform Engineering team established.",
-                "occurredAt": "2025-01-15T00:00:00Z",
-            }
+            {"eventType": "TEAM_CREATED",  "description": "Platform Engineering team established.",            "occurredAt": "2025-01-15T00:00:00Z"},
+            {"eventType": "member_added",  "description": "Carol White joined as Member.",                     "occurredAt": "2025-02-01T00:00:00Z"},
+            {"eventType": "member_added",  "description": "James Okafor joined as Member.",                    "occurredAt": "2025-02-01T00:00:00Z"},
+            {"eventType": "member_added",  "description": "Fatima Al-Rashid joined as Member (non-direct).",   "occurredAt": "2025-03-01T00:00:00Z"},
+            {"eventType": "member_added",  "description": "Tom Wilson joined as Member.",                      "occurredAt": "2025-04-01T00:00:00Z"},
+            {"eventType": "member_added",  "description": "Elena Russo appointed as Delegate.",                "occurredAt": "2025-06-01T00:00:00Z"},
         ],
-        "isDeleted": False,
-        "deletedAt": None,
+        "isDeleted": False, "deletedAt": None,
     },
     {
         "_id": "team_002",
-        "teamName": "Customer Success",
-        "description": "Client relationship management and support escalation.",
-        "primaryLocation": "loc_london",
-        "members": [],
+        "teamName": "Customer Success - LATAM",
+        "description": "Client relationship management and support escalation for Latin America.",
+        "primaryLocation": "loc_miami_latam",
+        "members": [
+            {"personId": "ind_004", "personName": "Maria Garcia",   "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-03-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_016", "personName": "Carlos Mendez",  "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-03-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_012", "personName": "Dan Brown",      "memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-04-01T00:00:00Z", "endDate": None},
+        ],
         "reportingHistory": [
-            {
-                "orgLeaderId": "ind_001",
-                "orgLeaderName": "Alice Smith",
-                "startDate": "2025-06-01T00:00:00Z",
-                "endDate": None,
-            }
+            {"orgLeaderId": "ind_001", "orgLeaderName": "Jorge taban", "startDate": "2025-03-01T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {
-                "eventType": "TEAM_CREATED",
-                "description": "Customer Success team established.",
-                "occurredAt": "2025-06-01T00:00:00Z",
-            }
+            {"eventType": "TEAM_CREATED", "description": "Customer Success LATAM team established.", "occurredAt": "2025-03-01T00:00:00Z"},
         ],
-        "isDeleted": False,
-        "deletedAt": None,
+        "isDeleted": False, "deletedAt": None,
+    },
+    {
+        "_id": "team_003",
+        "teamName": "Data Platform",
+        "description": "Data engineering, ML pipelines, and analytics infrastructure.",
+        "primaryLocation": "loc_singapore",
+        "members": [
+            {"personId": "ind_005", "personName": "Yuki Tanaka",    "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_011", "personName": "Jet Chen",      "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_017", "personName": "Ananya Desai",   "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-03-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_009", "personName": "Elena Russo",    "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-04-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_015", "personName": "Suki Watanabe",  "memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-05-01T00:00:00Z", "endDate": None},
+        ],
+        "reportingHistory": [
+            {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-02-01T00:00:00Z", "endDate": None},
+        ],
+        "teamHistory": [
+            {"eventType": "TEAM_CREATED", "description": "Data Platform team established.", "occurredAt": "2025-02-01T00:00:00Z"},
+        ],
+        "isDeleted": False, "deletedAt": None,
+    },
+    {
+        "_id": "team_004",
+        "teamName": "Regulatory & Compliance",
+        "description": "Risk management, regulatory reporting, and internal audit support.",
+        "primaryLocation": "loc_frankfurt",
+        "members": [
+            {"personId": "ind_006", "personName": "Hans Mueller",    "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-01-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_018", "personName": "Patrick O'Brien", "memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-01-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_012", "personName": "Dan Brown",       "memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-02-01T00:00:00Z", "endDate": None},
+        ],
+        "reportingHistory": [
+            {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-01-01T00:00:00Z", "endDate": None},
+        ],
+        "teamHistory": [
+            {"eventType": "TEAM_CREATED", "description": "Regulatory & Compliance team established.", "occurredAt": "2025-01-01T00:00:00Z"},
+        ],
+        "isDeleted": False, "deletedAt": None,
+    },
+    {
+        "_id": "team_005",
+        "teamName": "Core Infrastructure - India",
+        "description": "Backend services, API gateway, and microservices for APAC expansion.",
+        "primaryLocation": "loc_mumbai",
+        "members": [
+            {"personId": "ind_007", "personName": "Priya Sharma",   "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-04-01T00:00:00Z", "endDate": None},
+            {"personId": "ind_017", "personName": "Ananya Desai",   "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-04-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_011", "personName": "Jet Chen",      "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-05-01T00:00:00Z", "endDate": None},
+        ],
+        "reportingHistory": [
+            {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-04-01T00:00:00Z", "endDate": None},
+        ],
+        "teamHistory": [
+            {"eventType": "TEAM_CREATED", "description": "Core Infrastructure India team established.", "occurredAt": "2025-04-01T00:00:00Z"},
+        ],
+        "isDeleted": False, "deletedAt": None,
     },
 ]
 
 _SEED_ACHIEVEMENTS = [
+    # ── Platform Engineering (team_001) ───────────────────────────────
     {
-        "_id": "ach_001",
-        "teamId": "team_001",
+        "_id": "ach_001", "teamId": "team_001",
         "title": "Zero-downtime migration to new CI/CD pipeline",
         "description": "Migrated 12 microservices to the new pipeline with no customer-facing downtime.",
-        "achievementMonth": "2025-03",
-        "impactMetric": "100% uptime maintained",
+        "achievementMonth": "2025-03", "impactMetric": "100% uptime maintained",
         "tags": ["devops", "infrastructure"],
         "contributors": [
-            {"personId": "ind_002", "personName": "Bob Jones"},
-            {"personId": "ind_003", "personName": "Carol White"},
+            {"personId": "ind_003", "personName": "Niel Escobar"},
+            {"personId": "ind_008", "personName": "Carol White"},
         ],
-        "createdBy": "ind_002",
+        "createdBy": "ind_003",
     },
     {
-        "_id": "ach_002",
-        "teamId": None,
-        "title": "Company-wide security audit passed",
-        "description": "Org-wide SOC 2 Type II audit completed with zero findings.",
-        "achievementMonth": "2025-04",
-        "impactMetric": "0 critical findings",
+        "_id": "ach_002", "teamId": "team_001",
+        "title": "Reduced build times by 60%",
+        "description": "Optimized Docker layer caching and parallelized test suites across the monorepo.",
+        "achievementMonth": "2025-05", "impactMetric": "Build time: 12min → 5min",
+        "tags": ["performance", "devops"],
+        "contributors": [
+            {"personId": "ind_008", "personName": "Carol White"},
+            {"personId": "ind_010", "personName": "James Okafor"},
+        ],
+        "createdBy": "ind_008",
+    },
+    {
+        "_id": "ach_003", "teamId": "team_001",
+        "title": "Infrastructure cost optimization",
+        "description": "Right-sized EC2 instances and migrated cold storage to S3 Glacier, saving $18k/month.",
+        "achievementMonth": "2025-08", "impactMetric": "$18k/month saved",
+        "tags": ["cost-optimization", "cloud"],
+        "contributors": [
+            {"personId": "ind_010", "personName": "James Okafor"},
+            {"personId": "ind_013", "personName": "Fatima Al-Rashid"},
+        ],
+        "createdBy": "ind_003",
+    },
+    # ── Customer Success LATAM (team_002) ─────────────────────────────
+    {
+        "_id": "ach_004", "teamId": "team_002",
+        "title": "Client retention improved to 94%",
+        "description": "Implemented proactive outreach program reducing churn by 6 percentage points YoY.",
+        "achievementMonth": "2025-06", "impactMetric": "Retention: 88% → 94%",
+        "tags": ["client-success", "latam"],
+        "contributors": [
+            {"personId": "ind_004", "personName": "Maria Garcia"},
+            {"personId": "ind_016", "personName": "Carlos Mendez"},
+        ],
+        "createdBy": "ind_004",
+    },
+    {
+        "_id": "ach_005", "teamId": "team_002",
+        "title": "Launched Spanish-language support portal",
+        "description": "Built and shipped a fully localized self-service portal for LATAM clients.",
+        "achievementMonth": "2025-09", "impactMetric": "40% reduction in support tickets",
+        "tags": ["localization", "client-success"],
+        "contributors": [
+            {"personId": "ind_016", "personName": "Carlos Mendez"},
+            {"personId": "ind_012", "personName": "Dan Brown"},
+        ],
+        "createdBy": "ind_004",
+    },
+    # ── Data Platform (team_003) ──────────────────────────────────────
+    {
+        "_id": "ach_006", "teamId": "team_003",
+        "title": "Real-time fraud detection pipeline launched",
+        "description": "Deployed Kafka-based streaming pipeline processing 50k events/sec with <200ms latency.",
+        "achievementMonth": "2025-04", "impactMetric": "50k events/sec, <200ms p99",
+        "tags": ["data-engineering", "fraud"],
+        "contributors": [
+            {"personId": "ind_005", "personName": "Yuki Tanaka"},
+            {"personId": "ind_011", "personName": "Jet Chen"},
+            {"personId": "ind_017", "personName": "Ananya Desai"},
+        ],
+        "createdBy": "ind_005",
+    },
+    {
+        "_id": "ach_007", "teamId": "team_003",
+        "title": "Data lake migration to Iceberg format",
+        "description": "Migrated 4TB of historical data from Parquet to Apache Iceberg with zero downtime.",
+        "achievementMonth": "2025-07", "impactMetric": "30% query cost reduction",
+        "tags": ["data-engineering", "migration"],
+        "contributors": [
+            {"personId": "ind_011", "personName": "Jet Chen"},
+            {"personId": "ind_009", "personName": "Elena Russo"},
+        ],
+        "createdBy": "ind_005",
+    },
+    # ── Regulatory & Compliance (team_004) ────────────────────────────
+    {
+        "_id": "ach_008", "teamId": "team_004",
+        "title": "EU DORA compliance framework implemented",
+        "description": "Completed gap analysis and implemented all required controls ahead of the January 2025 deadline.",
+        "achievementMonth": "2025-01", "impactMetric": "100% DORA controls in place",
+        "tags": ["compliance", "regulatory", "emea"],
+        "contributors": [
+            {"personId": "ind_006", "personName": "Hans Mueller"},
+            {"personId": "ind_018", "personName": "Patrick O'Brien"},
+        ],
+        "createdBy": "ind_006",
+    },
+    # ── Core Infrastructure India (team_005) ──────────────────────────
+    {
+        "_id": "ach_009", "teamId": "team_005",
+        "title": "API gateway v2 with rate limiting",
+        "description": "Shipped new API gateway with token-bucket rate limiting and circuit breaker patterns.",
+        "achievementMonth": "2025-06", "impactMetric": "99.95% availability SLA met",
+        "tags": ["backend", "reliability"],
+        "contributors": [
+            {"personId": "ind_007", "personName": "Priya Sharma"},
+            {"personId": "ind_017", "personName": "Ananya Desai"},
+        ],
+        "createdBy": "ind_007",
+    },
+    {
+        "_id": "ach_010", "teamId": "team_005",
+        "title": "Microservices observability rollout",
+        "description": "Deployed OpenTelemetry tracing across all 20 APAC microservices.",
+        "achievementMonth": "2025-08", "impactMetric": "MTTR reduced from 45min to 12min",
+        "tags": ["observability", "reliability"],
+        "contributors": [
+            {"personId": "ind_007", "personName": "Priya Sharma"},
+            {"personId": "ind_011", "personName": "Jet Chen"},
+        ],
+        "createdBy": "ind_007",
+    },
+    # ── Org-wide (no team) ────────────────────────────────────────────
+    {
+        "_id": "ach_011", "teamId": None,
+        "title": "SOC 2 Type II audit passed with zero findings",
+        "description": "Company-wide audit completed covering all production systems and data handling procedures.",
+        "achievementMonth": "2025-04", "impactMetric": "0 critical findings",
         "tags": ["security", "compliance"],
         "contributors": [
-            {"personId": "ind_001", "personName": "Alice Smith"},
+            {"personId": "ind_001", "personName": "Jorge taban"},
+            {"personId": "ind_006", "personName": "Hans Mueller"},
+            {"personId": "ind_013", "personName": "Fatima Al-Rashid"},
         ],
         "createdBy": "ind_001",
     },
     {
-        "_id": "ach_003",
-        "teamId": "team_001",
-        "title": "Reduced build times by 60%",
-        "description": "Optimized Docker layer caching and parallelized test suites.",
-        "achievementMonth": "2025-05",
-        "impactMetric": "Build time: 12min → 5min",
-        "tags": ["performance", "devops"],
+        "_id": "ach_012", "teamId": None,
+        "title": "Global hackathon: AI-powered onboarding assistant",
+        "description": "Cross-team hackathon winning project — an LLM-based assistant that reduced new hire ramp-up time by 30%.",
+        "achievementMonth": "2025-10", "impactMetric": "30% faster onboarding",
+        "tags": ["innovation", "hackathon", "ai"],
         "contributors": [
-            {"personId": "ind_003", "personName": "Carol White"},
+            {"personId": "ind_005", "personName": "Yuki Tanaka"},
+            {"personId": "ind_008", "personName": "Carol White"},
+            {"personId": "ind_016", "personName": "Carlos Mendez"},
+            {"personId": "ind_017", "personName": "Ananya Desai"},
         ],
-        "createdBy": "ind_003",
+        "createdBy": "ind_002",
     },
 ]
 
@@ -500,7 +698,7 @@ async def seed_database(
 
         # Build the insert doc — hash the password and remove the _password key
         doc = {k: v for k, v in template.items() if k != "_password"}
-        doc["auth"]["hashedPassword"] = _hash(template["_password"])
+        doc["auth"]["hashedPassword"] = hash_password(template["_password"])
         doc["createdAt"] = now
         doc["updatedAt"] = now
         await db["individuals"].insert_one(doc)

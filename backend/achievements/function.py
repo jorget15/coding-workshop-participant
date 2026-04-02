@@ -21,50 +21,22 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from bson import ObjectId
-from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, status
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
+from shared import create_app, serialize_doc, oid
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
 from shared.logging import get_logger
 
 logger = get_logger("achievements")
 
-
-def _doc(d: dict) -> dict:
-    """Serialize ObjectId _id to string for JSON responses."""
-    if d and "_id" in d:
-        d["_id"] = str(d["_id"])
-    return d
-
-
-def _oid(value: str) -> ObjectId:
-    try:
-        return ObjectId(value)
-    except (InvalidId, Exception):
-        raise HTTPException(status_code=400, detail=f"Invalid id format: '{value}'.")
-
 # ---------------------------------------------------------------------------
 # Standalone FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="ACME Achievements Service",
-    version="1.0.0",
-)
-
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = create_app("ACME Achievements Service")
 
 router = APIRouter()
 
@@ -133,7 +105,7 @@ async def list_achievements(
         query["achievementDate"] = date_filter
     docs = await db["achievements"].find(query).sort("achievementDate", -1).to_list(200)
     logger.info("Listed achievements", extra={"count": len(docs), "user_id": user.user_id, "filters": {k: v for k, v in {"team_id": team_id, "individual_id": individual_id}.items() if v}})
-    return [_doc(d) for d in docs]
+    return [serialize_doc(d) for d in docs]
 
 
 @router.get("/{achievement_id}")
@@ -158,7 +130,7 @@ async def get_achievement(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: not awarded to you and not your team.",
         )
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -197,7 +169,7 @@ async def create_achievement(
     result = await db["achievements"].insert_one(doc)
     doc["_id"] = result.inserted_id
     logger.info("Created achievement", extra={"achievement_id": str(result.inserted_id), "title": payload.title, "scope": "team" if payload.team_id else "org"})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.patch("/{achievement_id}")
@@ -224,7 +196,7 @@ async def update_achievement(
     set_dict = {field_map.get(k, k): v for k, v in updates.items()}
     await db["achievements"].update_one({"_id": oid}, {"$set": set_dict})
     doc = await db["achievements"].find_one({"_id": oid})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 # ---------------------------------------------------------------------------

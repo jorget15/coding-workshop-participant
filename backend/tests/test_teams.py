@@ -52,7 +52,7 @@ TEAM_WITH_LEADER = {
 
 INDIVIDUAL_DOC = {
     "_id": PERSON_ID,
-    "personName": "Alice Smith",
+    "personName": "Jorge taban",
     "staffType": "direct",
 }
 

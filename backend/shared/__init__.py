@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 
-def doc(d: dict) -> dict:
+def serialize_doc(d: dict) -> dict:
     """Serialize ObjectId _id to string for JSON responses; strip auth block."""
     if d and "_id" in d:
         d["_id"] = str(d["_id"])

@@ -624,7 +624,7 @@ print("Seeded: locations (10 docs — NAM x2, LATAM x1, EMEA x3, APAC x4)");
 //   person_201–215 : Members (some in multiple teams [R3])
 //
 // Notable seed data patterns for testing:
-//   - person_101 (Alice Smith) is a non-direct team leader
+//   - person_101 (Jorge taban) is a non-direct team leader
 //     in a different city than her team's home location.
 //     This exercises two business report flags at once:
 //     "leader not co-located" and "leader is non-direct."
@@ -667,7 +667,7 @@ acme.individuals.insertMany([
     // NOTE: Alice is in NYC (loc_nyc_hq) but leads team_001 based in Miami LATAM.
     // This flags "leader not co-located" in business reports.
     // She is also "non-direct" — flags "leader is non-direct."
-    _id: "person_101", personName: "Alice Smith",    email: "asmith@acme.com",
+    _id: "person_101", personName: "Jorge taban",    email: "asmith@acme.com",
     primaryLocation: "loc_nyc_hq",       staffType: "non-direct",
     jobTitle: "Engineering Lead",     roles: ["team_lead", "editor"],
     isDeleted: false, deletedAt: null, createdAt: "2023-06-01", updatedAt: "2026-01-15"
@@ -804,7 +804,7 @@ print("Seeded: individuals (20 docs — 4 senior leaders, 5 team leaders, 11 mem
 // SEED DATA DESIGNED TO EXERCISE BUSINESS REPORT SCENARIOS:
 //
 //   team_001 "Data Platform" (Miami LATAM — loc_miami_latam)
-//     Leader: Alice Smith — NYC/loc_nyc_hq (NOT co-located) + non-direct
+//     Leader: Jorge taban — NYC/loc_nyc_hq (NOT co-located) + non-direct
 //     Non-direct members: 1 of 5 (Elena Russo)
 //     => Non-direct ratio (members only): 1/5 = 20% (boundary)
 //     => Flags: leader not co-located, leader is non-direct

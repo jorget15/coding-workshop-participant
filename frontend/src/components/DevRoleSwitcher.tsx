@@ -13,7 +13,7 @@ const PERSONAS: (PersonaPayload & { label: string })[] = [
   {
     label:     '🔴 System Admin',
     userId:    'dev-admin-001',
-    username:  'Alice Smith',
+    username:  'Jorge taban',
     email:     'alice.smith@acme.com',
     role:      'system_admin',
     staffType: 'direct',

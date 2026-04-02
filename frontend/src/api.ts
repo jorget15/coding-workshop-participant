@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 
 // In development, Vite proxies /api/* to the Node proxy (http://localhost:3001)
 // which routes each service path to the correct Lambda URL.
@@ -20,5 +20,14 @@ api.interceptors.request.use((config) => {
   }
   return config
 })
+
+/** Extract the error message from an Axios error response (FastAPI returns `detail`). */
+export function apiError(err: unknown, fallback: string): string {
+  if (err instanceof AxiosError) {
+    const data = err.response?.data as { detail?: string } | undefined
+    return data?.detail ?? fallback
+  }
+  return fallback
+}
 
 export default api

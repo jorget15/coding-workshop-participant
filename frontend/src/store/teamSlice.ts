@@ -10,7 +10,7 @@
  *   - staffTypeSnapshot is frozen at join time (R7).
  */
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import api from '../api'
+import api, { apiError } from '../api'
 
 export type Region = 'NAM' | 'LATAM' | 'EU' | 'APAC'
 export type StaffType = 'direct' | 'non-direct'
@@ -104,40 +104,24 @@ const initialState: TeamState = {
 export const fetchTeamsAsync = createAsyncThunk(
   'teams/fetchAll',
   async (_, { rejectWithValue }) => {
-    try {
-      const res = await api.get('/teams')
-      return res.data as Team[]
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Failed to fetch teams')
-    }
+    try { return (await api.get('/teams')).data as Team[] }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch teams')) }
   }
 )
 
 export const fetchIndividualsAsync = createAsyncThunk(
   'teams/fetchIndividuals',
   async (_, { rejectWithValue }) => {
-    try {
-      const res = await api.get('/individuals')
-      return res.data as Individual[]
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Failed to fetch individuals')
-    }
+    try { return (await api.get('/individuals')).data as Individual[] }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch individuals')) }
   }
 )
 
 export const fetchLocationsAsync = createAsyncThunk(
   'teams/fetchLocations',
   async (_, { rejectWithValue }) => {
-    try {
-      // Locations are served by the metadata Lambda → /api/metadata/locations via proxy
-      const res = await api.get('/metadata/locations')
-      return res.data as Location[]
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Failed to fetch locations')
-    }
+    try { return (await api.get('/metadata/locations')).data as Location[] }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch locations')) }
   }
 )
 
@@ -146,25 +130,16 @@ export const fetchAchievementsAsync = createAsyncThunk(
   async (teamId: string | undefined, { rejectWithValue }) => {
     try {
       const url = teamId ? `/achievements?teamId=${teamId}` : '/achievements'
-      const res = await api.get(url)
-      return res.data as Achievement[]
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Failed to fetch achievements')
-    }
+      return (await api.get(url)).data as Achievement[]
+    } catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch achievements')) }
   }
 )
 
 export const createAchievementAsync = createAsyncThunk(
   'teams/createAchievement',
   async (payload: AchievementInput, { rejectWithValue }) => {
-    try {
-      const res = await api.post('/achievements', payload)
-      return res.data as Achievement
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Failed to create achievement')
-    }
+    try { return (await api.post('/achievements', payload)).data as Achievement }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to create achievement')) }
   }
 )
 
@@ -173,65 +148,40 @@ export const createAchievementAsync = createAsyncThunk(
 export const createTeamAsync = createAsyncThunk(
   'teams/createTeam',
   async (payload: { team_name: string; description: string; location_id: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.post('/teams', payload)
-      return res.data as Team
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create team')
-    }
+    try { return (await api.post('/teams', payload)).data as Team }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to create team')) }
   }
 )
 
 export const updateTeamAsync = createAsyncThunk(
   'teams/updateTeam',
   async ({ id, ...payload }: { id: string; team_name?: string; description?: string; location_id?: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.patch(`/teams/${id}`, payload)
-      return res.data as Team
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update team')
-    }
+    try { return (await api.patch(`/teams/${id}`, payload)).data as Team }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to update team')) }
   }
 )
 
 export const closeTeamAsync = createAsyncThunk(
   'teams/closeTeam',
   async (id: string, { rejectWithValue }) => {
-    try {
-      const res = await api.post(`/teams/${id}/close`)
-      return res.data as Team
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to close team')
-    }
+    try { return (await api.post(`/teams/${id}/close`)).data as Team }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to close team')) }
   }
 )
 
 export const addMemberAsync = createAsyncThunk(
   'teams/addMember',
   async ({ teamId, ...payload }: { teamId: string; person_id: string; member_role: MemberRole }, { rejectWithValue }) => {
-    try {
-      const res = await api.post(`/teams/${teamId}/members`, payload)
-      return res.data as Team
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to add member')
-    }
+    try { return (await api.post(`/teams/${teamId}/members`, payload)).data as Team }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to add member')) }
   }
 )
 
 export const removeMemberAsync = createAsyncThunk(
   'teams/removeMember',
   async ({ teamId, personId }: { teamId: string; personId: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.delete(`/teams/${teamId}/members/${personId}`)
-      return res.data as Team
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to remove member')
-    }
+    try { return (await api.delete(`/teams/${teamId}/members/${personId}`)).data as Team }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to remove member')) }
   }
 )
 
@@ -240,39 +190,24 @@ export const removeMemberAsync = createAsyncThunk(
 export const createIndividualAsync = createAsyncThunk(
   'teams/createIndividual',
   async (payload: { person_name: string; email: string; primary_location: string; staff_type: StaffType; job_title: string; password: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.post('/individuals', payload)
-      return res.data as Individual
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create individual')
-    }
+    try { return (await api.post('/individuals', payload)).data as Individual }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to create individual')) }
   }
 )
 
 export const updateIndividualAsync = createAsyncThunk(
   'teams/updateIndividual',
   async ({ id, ...payload }: { id: string; person_name?: string; email?: string; primary_location?: string; staff_type?: StaffType; job_title?: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.patch(`/individuals/${id}`, payload)
-      return res.data as Individual
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update individual')
-    }
+    try { return (await api.patch(`/individuals/${id}`, payload)).data as Individual }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to update individual')) }
   }
 )
 
 export const deactivateIndividualAsync = createAsyncThunk(
   'teams/deactivateIndividual',
   async (id: string, { rejectWithValue }) => {
-    try {
-      const res = await api.delete(`/individuals/${id}`)
-      return res.data as Individual
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to deactivate individual')
-    }
+    try { return (await api.delete(`/individuals/${id}`)).data as Individual }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to deactivate individual')) }
   }
 )
 
@@ -281,26 +216,16 @@ export const deactivateIndividualAsync = createAsyncThunk(
 export const createLocationAsync = createAsyncThunk(
   'teams/createLocation',
   async (payload: Omit<Location, '_id'>, { rejectWithValue }) => {
-    try {
-      const res = await api.post('/metadata/locations', payload)
-      return res.data as Location
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create location')
-    }
+    try { return (await api.post('/metadata/locations', payload)).data as Location }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to create location')) }
   }
 )
 
 export const updateLocationAsync = createAsyncThunk(
   'teams/updateLocation',
   async ({ id, ...payload }: { id: string; name?: string; city?: string; country?: string; region?: Region; timezone?: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.patch(`/metadata/locations/${id}`, payload)
-      return res.data as Location
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update location')
-    }
+    try { return (await api.patch(`/metadata/locations/${id}`, payload)).data as Location }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to update location')) }
   }
 )
 

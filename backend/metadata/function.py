@@ -15,44 +15,24 @@ Environment variables:
     ALLOWED_ORIGINS   - Comma-separated CORS origins.
 """
 
-import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, status
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
+from shared import create_app, serialize_doc
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
 from shared.logging import get_logger
 
 logger = get_logger("metadata")
 
-
-def _doc(d: dict) -> dict:
-    if d and "_id" in d:
-        d["_id"] = str(d["_id"])
-    return d
-
-
 # ---------------------------------------------------------------------------
 # Standalone FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="ACME Metadata Service",
-    version="1.0.0",
-)
-
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = create_app("ACME Metadata Service")
 
 router = APIRouter()
 
@@ -93,7 +73,7 @@ async def list_locations(
     """Return all locations sorted by country then city."""
     docs = await db["locations"].find({}).sort([("country", 1), ("city", 1)]).to_list(500)
     logger.info("Listed locations", extra={"count": len(docs)})
-    return [_doc(d) for d in docs]
+    return [serialize_doc(d) for d in docs]
 
 
 @router.get("/locations/{location_id}")
@@ -109,7 +89,7 @@ async def get_location(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Location '{location_id}' not found.",
         )
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.post("/locations", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("system_admin"))])
@@ -134,7 +114,7 @@ async def create_location(
     result = await db["locations"].insert_one(doc)
     doc["_id"] = result.inserted_id
     logger.info("Created location", extra={"location_id": str(result.inserted_id), "city": payload.city, "country": payload.country})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.patch("/locations/{location_id}", dependencies=[Depends(require_role("system_admin"))])
@@ -154,7 +134,7 @@ async def update_location(
             detail=f"Location '{location_id}' not found.",
         )
     doc = await db["locations"].find_one({"_id": location_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.delete("/locations/{location_id}", dependencies=[Depends(require_role("system_admin"))])
@@ -170,7 +150,7 @@ async def delete_location(
             detail=f"Location '{location_id}' not found.",
         )
     doc = await db["locations"].find_one({"_id": location_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +173,7 @@ async def get_enums() -> dict:
         "staff_types": ["direct", "non-direct"],
         "member_roles": ["Team Leader", "Member", "Delegate"],
         "user_roles": ["system_admin", "team_lead", "editor", "viewer"],
+        "regions": ["NAM", "LATAM", "EMEA", "APAC"],
     }
 
 

@@ -23,7 +23,7 @@ pytestmark = pytest.mark.asyncio
 INDIVIDUAL_ID = "ind_alice_001"
 
 VALID_PAYLOAD = {
-    "person_name": "Alice Smith",
+    "person_name": "Jorge taban",
     "email": "alice@acme.com",
     "staff_type": "direct",
     "password": "Secret1234!",
@@ -31,7 +31,7 @@ VALID_PAYLOAD = {
 
 EXISTING_DOC = {
     "_id": INDIVIDUAL_ID,
-    "personName": "Alice Smith",
+    "personName": "Jorge taban",
     "email": "alice@acme.com",
     "staffType": "direct",
     "jobTitle": "Analyst",
@@ -97,7 +97,7 @@ class TestGetIndividual:
         assert resp.status_code == 200
         body = resp.json()
         assert body["email"] == "alice@acme.com"
-        assert body["personName"] == "Alice Smith"
+        assert body["personName"] == "Jorge taban"
         assert "auth" not in body
 
     async def test_user_can_view_own_profile(self, client: AsyncClient) -> None:
@@ -146,7 +146,7 @@ class TestCreateIndividual:
             resp = await client.post("/individuals", json=VALID_PAYLOAD)
         assert resp.status_code == 201
         body = resp.json()
-        assert body["personName"] == "Alice Smith"
+        assert body["personName"] == "Jorge taban"
         assert body["staffType"] == "direct"
         assert "auth" not in body
 

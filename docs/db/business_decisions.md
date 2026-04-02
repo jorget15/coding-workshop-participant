@@ -204,3 +204,19 @@ This document records the key business decisions, trade-offs, and design rationa
 | — | Achievement month format (YYYY-MM) | Schema (regex pattern) |
 | — | Member role enum | Schema (enum constraint) |
 | — | Staff type enum | Schema (enum constraint) |
+
+---
+
+## Reporting Requirements
+
+The following questions must be answerable from the data and surfaced in the application's reporting views.
+
+| # | Question | Key fields |
+|---|----------|------------|
+| Q1 | Who are the members of each team? | `teams.members` (active entries where `endDate === null`) cross-referenced with `individuals` for name/location |
+| Q2 | Where are the teams located? | `teams.primaryLocation` → `locations._id` / `locations.locationName` |
+| Q3 | What are the key achievements of each team on a monthly basis? | `achievements.teamId`, `achievements.achievementMonth` (YYYY-MM) |
+| Q4 | How many teams have a Team Leader not co-located with their team members? | Compare Team Leader's `individuals.primaryLocation` against each active member's `individuals.primaryLocation`; count teams where at least one member differs |
+| Q5 | How many teams have a Team Leader who is non-direct staff? | Look up the active Team Leader's `individuals.staffType`; count teams where `staffType === "non-direct"` |
+| Q6 | How many teams have a non-direct staff to employee ratio above 20%? | Among active `"Member"` entries, count `staffTypeSnapshot === "non-direct"` / total; flag teams above 20% (see Decision #14) |
+| Q7 | How many teams are reporting to an organisation leader? | Count teams with at least one active entry in `reportingHistory` (i.e., `reportingHistory` array is non-empty and the latest entry has `endDate === null`) |

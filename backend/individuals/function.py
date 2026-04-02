@@ -27,7 +27,7 @@ from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, EmailStr, Field
 
-from shared import create_app, doc, hash_password, oid
+from shared import create_app, serialize_doc, hash_password, oid
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
 from shared.logging import get_logger
@@ -99,7 +99,7 @@ async def list_individuals(
         ]
     docs = await db["individuals"].find(query).to_list(200)
     logger.info("Listed individuals", extra={"count": len(docs), "user_id": user.user_id, "filters": {k: v for k, v in {"primary_location": primary_location, "staff_type": staff_type, "search": search}.items() if v}})
-    return [_doc(d) for d in docs]
+    return [serialize_doc(d) for d in docs]
 
 
 @router.get("/{individual_id}")
@@ -123,7 +123,7 @@ async def get_individual(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Individual '{individual_id}' not found.",
         )
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("system_admin"))])
@@ -147,7 +147,7 @@ async def create_individual(
         "primaryLocation": payload.primary_location,
         "roles": payload.roles,
         "profilePicture": payload.profile_picture or "avatars/defaults/default_01.png",
-        "auth": {"hashedPassword": _hash_password(payload.password)},
+        "auth": {"hashedPassword": hash_password(payload.password)},
         "isDeleted": False,
         "deletedAt": None,
         "createdAt": now,
@@ -156,7 +156,7 @@ async def create_individual(
     result = await db["individuals"].insert_one(doc)
     doc["_id"] = result.inserted_id
     logger.info("Created individual", extra={"individual_id": str(result.inserted_id), "email": payload.email, "staff_type": payload.staff_type})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.patch("/{individual_id}")
@@ -198,7 +198,7 @@ async def update_individual(
             detail=f"Individual '{individual_id}' not found or deleted.",
         )
     doc = await db["individuals"].find_one({"_id": individual_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.delete("/{individual_id}", dependencies=[Depends(require_role("system_admin"))])
@@ -229,7 +229,7 @@ async def deactivate_individual(
             detail=f"Individual '{individual_id}' not found.",
         )
     doc = await db["individuals"].find_one({"_id": individual_id})
-    return _doc(doc)
+    return serialize_doc(doc)
 
 
 @router.post("/{individual_id}/avatar-upload-url")

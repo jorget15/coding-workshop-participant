@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import api from '../api'
+import api, { apiError } from '../api'
 
 /** Matches the roles[] array on the individuals collection (R10 in business_decisions.md). */
 export type Role = 'system_admin' | 'team_lead' | 'editor' | 'viewer' | 'non-direct'
@@ -62,13 +62,8 @@ export const restoreAuth = createAsyncThunk(
 export const loginAsync = createAsyncThunk(
   'auth/login',
   async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
-    try {
-      const res = await api.post('/auth/login', { email, password })
-      return res.data // { userId, name, role }
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      return rejectWithValue(axiosErr.response?.data?.error ?? 'Login failed')
-    }
+    try { return (await api.post('/auth/login', { email, password })).data }
+    catch (err) { return rejectWithValue(apiError(err, 'Login failed')) }
   }
 )
 
