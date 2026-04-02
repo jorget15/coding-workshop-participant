@@ -105,12 +105,12 @@ const authSlice = createSlice({
     builder
       .addCase(restoreAuth.fulfilled, (state, action) => {
         state.isAuthenticated = true
-        state.userId    = action.payload.userId  ?? action.payload.sub ?? null
-        state.username  = action.payload.username ?? action.payload.name ?? null
-        state.email     = action.payload.email   ?? null
-        state.role      = action.payload.role    ?? null
-        state.staffType = action.payload.staffType ?? null
-        state.teamId    = action.payload.teamId  ?? null
+        state.userId    = action.payload.sub ?? null
+        state.username  = action.payload.username ?? null
+        state.email     = null  // not in JWT; populate from profile fetch
+        state.role      = action.payload.role ?? null
+        state.staffType = null  // not in JWT; populate from profile fetch
+        state.teamId    = action.payload.team_id ?? null
       })
       .addCase(restoreAuth.rejected, (state) => {
         // Token missing/expired — stay unauthenticated, no error shown
@@ -123,15 +123,15 @@ const authSlice = createSlice({
       .addCase(loginAsync.fulfilled, (state, action) => {
         state.loading         = false
         state.isAuthenticated = true
-        state.userId          = action.payload.userId
-        state.username        = action.payload.name
-        state.email           = action.payload.email
+        state.userId          = action.payload.user_id
+        state.username        = action.payload.username
+        state.email           = null  // not in token response; populate from profile fetch
         state.role            = action.payload.role
-        state.staffType       = action.payload.staffType
-        state.teamId          = action.payload.teamId ?? null
+        state.staffType       = null  // not in token response; populate from profile fetch
+        state.teamId          = action.payload.team_id ?? null
         // Persist JWT so axios interceptor can attach it to every request
-        if (action.payload.token) {
-          localStorage.setItem('acme_token', action.payload.token)
+        if (action.payload.access_token) {
+          localStorage.setItem('acme_token', action.payload.access_token)
         }
       })
       .addCase(loginAsync.rejected, (state, action) => {

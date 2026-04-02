@@ -2,12 +2,12 @@
 Pytest tests for the Individuals Lambda (``individuals/function.py``).
 
 Coverage:
-    - GET  /individuals              — list (admin and viewer)
-    - GET  /individuals/{id}         — get by ID (found / not-found)
-    - POST /individuals              — create (admin only / 403 for viewer)
-    - PATCH /individuals/{id}        — update (admin only / 403 for viewer)
-    - DELETE /individuals/{id}       — soft-delete (admin only)
-    - POST /individuals/{id}/avatar-upload-url — S3 presigned URL (admin only)
+    - GET    /individuals                       — list (admin, viewer, team_lead, filters, unauthenticated)
+    - GET    /individuals/{id}                  — get (own profile, admin, viewer 403, 404, auth block stripped)
+    - POST   /individuals                       — create (admin, dup 409, viewer 403, bad staff_type 422, bad email 422, short pw 422)
+    - PATCH  /individuals/{id}                  — update (admin, own profile, viewer 403, 404, empty payload 400, URL rejection)
+    - DELETE /individuals/{id}                  — soft-delete (admin, R4 conflict 409, viewer 403, team_lead 403, 404)
+    - POST   /individuals/{id}/avatar-upload-url — presigned URL (admin, own, viewer 403, missing bucket 500)
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,324 +20,301 @@ from tests.conftest import override_deps
 
 pytestmark = pytest.mark.asyncio
 
-INDIVIDUAL_ID = "507f1f77bcf86cd799439011"
+INDIVIDUAL_ID = "ind_alice_001"
 
 VALID_PAYLOAD = {
-    "first_name": "Alice",
-    "last_name": "Smith",
+    "person_name": "Alice Smith",
     "email": "alice@acme.com",
-    "staff_type": "Employee",
+    "staff_type": "direct",
     "password": "Secret1234!",
 }
 
 EXISTING_DOC = {
     "_id": INDIVIDUAL_ID,
-    "first_name": "Alice",
-    "last_name": "Smith",
+    "personName": "Alice Smith",
     "email": "alice@acme.com",
-    "staff_type": "Employee",
-    "isActive": True,
+    "staffType": "direct",
+    "jobTitle": "Analyst",
+    "primaryLocation": "loc_hq",
+    "profilePicture": "avatars/defaults/default_01.png",
+    "isDeleted": False,
+    "createdAt": "2026-01-01T00:00:00+00:00",
+    "updatedAt": "2026-01-01T00:00:00+00:00",
 }
 
 
 @pytest.fixture
 async def client() -> AsyncClient:
-    """Async HTTPX client wired to the Individuals Lambda app."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         yield c
 
 
 # ---------------------------------------------------------------------------
 # GET /individuals
 # ---------------------------------------------------------------------------
-
 class TestListIndividuals:
-    """Tests for listing all individuals."""
 
     async def test_admin_receives_200_and_list(self, client: AsyncClient) -> None:
-        """Admin should receive a 200 with an empty list when no data exists."""
         with override_deps(app, role="system_admin"):
-            response = await client.get("/individuals")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+            resp = await client.get("/individuals")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
     async def test_viewer_receives_200(self, client: AsyncClient) -> None:
-        """Viewers should be allowed to list individuals (read-only access)."""
         with override_deps(app, role="viewer"):
-            response = await client.get("/individuals")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+            resp = await client.get("/individuals")
+        assert resp.status_code == 200
+
+    async def test_team_lead_receives_200(self, client: AsyncClient) -> None:
+        with override_deps(app, role="team_lead", team_id="team_001"):
+            resp = await client.get("/individuals")
+        assert resp.status_code == 200
+
+    async def test_filter_by_staff_type(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.get("/individuals?staff_type=direct")
+        assert resp.status_code == 200
+
+    async def test_filter_by_search(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.get("/individuals?search=alice")
+        assert resp.status_code == 200
+
+    async def test_unauthenticated_is_rejected(self, client: AsyncClient) -> None:
+        resp = await client.get("/individuals")
+        assert resp.status_code in (401, 403)
 
 
 # ---------------------------------------------------------------------------
 # GET /individuals/{id}
 # ---------------------------------------------------------------------------
-
 class TestGetIndividual:
-    """Tests for retrieving a single individual by ID."""
 
-    async def test_returns_individual_when_found(self, client: AsyncClient) -> None:
-        """Should return the individual document when it exists in the DB."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_DOC)
-            response = await client.get(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 200
-        assert response.json()["email"] == "alice@acme.com"
+    async def test_admin_can_view_any(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_DOC)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["email"] == "alice@acme.com"
+        assert body["personName"] == "Alice Smith"
+        assert "auth" not in body
+
+    async def test_user_can_view_own_profile(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer") as (_, col, user):
+            col.find_one = AsyncMock(return_value={**EXISTING_DOC, "_id": user.user_id})
+            resp = await client.get(f"/individuals/{user.user_id}")
+        assert resp.status_code == 200
+
+    async def test_viewer_cannot_view_others(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer"):
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 403
+        assert "own profile" in resp.json()["detail"].lower()
+
+    async def test_team_lead_can_view_any(self, client: AsyncClient) -> None:
+        with override_deps(app, role="team_lead", team_id="team_001") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_DOC)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 200
 
     async def test_returns_404_when_not_found(self, client: AsyncClient) -> None:
-        """Should return 404 when no document matches the given ID."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=None)
-            response = await client.get(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 404
+        """Admin should get 404 when no document matches the given ID."""
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 404
+        assert INDIVIDUAL_ID in resp.json()["detail"]
+
+    async def test_auth_block_stripped_from_response(self, client: AsyncClient) -> None:
+        doc_with_auth = {**EXISTING_DOC, "auth": {"hashedPassword": "secret"}}
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=doc_with_auth)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 200
+        assert "auth" not in resp.json()
 
 
 # ---------------------------------------------------------------------------
 # POST /individuals
 # ---------------------------------------------------------------------------
-
 class TestCreateIndividual:
-    """Tests for creating a new individual."""
 
     async def test_admin_can_create(self, client: AsyncClient) -> None:
-        """System admin should be able to create a new individual (201)."""
-        with override_deps(app, role="system_admin"):
-            response = await client.post("/individuals", json=VALID_PAYLOAD)
-        assert response.status_code == 201
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            resp = await client.post("/individuals", json=VALID_PAYLOAD)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["personName"] == "Alice Smith"
+        assert body["staffType"] == "direct"
+        assert "auth" not in body
+
+    async def test_duplicate_email_returns_409(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value={"email": "alice@acme.com"})
+            resp = await client.post("/individuals", json=VALID_PAYLOAD)
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]
 
     async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to create individuals (403)."""
         with override_deps(app, role="viewer"):
-            response = await client.post("/individuals", json=VALID_PAYLOAD)
-        assert response.status_code == 403
+            resp = await client.post("/individuals", json=VALID_PAYLOAD)
+        assert resp.status_code == 403
+
+    async def test_team_lead_is_forbidden(self, client: AsyncClient) -> None:
+        with override_deps(app, role="team_lead", team_id="team_001"):
+            resp = await client.post("/individuals", json=VALID_PAYLOAD)
+        assert resp.status_code == 403
 
     async def test_invalid_staff_type_rejected(self, client: AsyncClient) -> None:
-        """Payload with an invalid staffType must be rejected with 422."""
-        bad_payload = {**VALID_PAYLOAD, "staff_type": "Intern"}
+        bad = {**VALID_PAYLOAD, "staff_type": "Intern"}
         with override_deps(app, role="system_admin"):
-            response = await client.post("/individuals", json=bad_payload)
-        assert response.status_code == 422
+            resp = await client.post("/individuals", json=bad)
+        assert resp.status_code == 422
+
+    async def test_missing_required_fields_rejected(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.post("/individuals", json={"email": "x@acme.com"})
+        assert resp.status_code == 422
+
+    async def test_invalid_email_rejected(self, client: AsyncClient) -> None:
+        bad = {**VALID_PAYLOAD, "email": "not-an-email"}
+        with override_deps(app, role="system_admin"):
+            resp = await client.post("/individuals", json=bad)
+        assert resp.status_code == 422
+
+    async def test_short_password_rejected(self, client: AsyncClient) -> None:
+        bad = {**VALID_PAYLOAD, "password": "short"}
+        with override_deps(app, role="system_admin"):
+            resp = await client.post("/individuals", json=bad)
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
 # PATCH /individuals/{id}
 # ---------------------------------------------------------------------------
-
 class TestUpdateIndividual:
-    """Tests for partially updating an individual."""
 
     async def test_admin_can_update(self, client: AsyncClient) -> None:
-        """Admin should be able to patch an existing individual (200)."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_DOC)
-            response = await client.patch(
-                f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Senior Analyst"},
-            )
-        assert response.status_code == 200
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_DOC)
+            resp = await client.patch(f"/individuals/{INDIVIDUAL_ID}", json={"job_title": "Senior Analyst"})
+        assert resp.status_code == 200
 
-    async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to update individuals (403)."""
+    async def test_user_can_update_own_profile(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer") as (_, col, user):
+            col.find_one = AsyncMock(return_value={**EXISTING_DOC, "_id": user.user_id})
+            resp = await client.patch(f"/individuals/{user.user_id}", json={"job_title": "Lead"})
+        assert resp.status_code == 200
+
+    async def test_viewer_cannot_update_others(self, client: AsyncClient) -> None:
         with override_deps(app, role="viewer"):
-            response = await client.patch(
-                f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Senior Analyst"},
-            )
-        assert response.status_code == 403
+            resp = await client.patch(f"/individuals/{INDIVIDUAL_ID}", json={"job_title": "X"})
+        assert resp.status_code == 403
 
-    async def test_returns_404_for_missing_individual(self, client: AsyncClient) -> None:
-        """Patching a non-existent individual should return 404."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=None)
-            mock_col.update_one = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
-            response = await client.patch(
+    async def test_returns_404_for_missing(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            col.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
+            resp = await client.patch(f"/individuals/{INDIVIDUAL_ID}", json={"job_title": "X"})
+        assert resp.status_code == 404
+
+    async def test_empty_payload_rejected(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.patch(f"/individuals/{INDIVIDUAL_ID}", json={})
+        assert resp.status_code == 400
+        assert "no fields" in resp.json()["detail"].lower()
+
+    async def test_rejects_url_for_profile_picture(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_DOC)
+            resp = await client.patch(
                 f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Analyst"},
+                json={"profile_picture": "https://s3.example.com/bad.jpg"},
             )
-        assert response.status_code == 404
+        assert resp.status_code == 400
+        assert "s3 object key" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
 # DELETE /individuals/{id}  (soft-delete — R4)
 # ---------------------------------------------------------------------------
-
 class TestSoftDeleteIndividual:
-    """Tests for soft-deleting an individual (R4 — no hard deletes)."""
 
     async def test_admin_soft_deletes(self, client: AsyncClient) -> None:
-        """Admin should be able to soft-delete (set isActive: false) — returns 200."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_DOC)
-            response = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 200
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(side_effect=[None, {**EXISTING_DOC, "isDeleted": True}])
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 200
+        assert resp.json()["isDeleted"] is True
+
+    async def test_r4_blocks_if_on_active_team(self, client: AsyncClient) -> None:
+        """R4: soft-delete must be blocked if individual is an active team member."""
+        active_team = {"_id": "team_001", "teamName": "Alpha"}
+        with override_deps(app, role="system_admin") as (mock_db, col, _):
+            # The route queries db["teams"] first (R4 check), then db["individuals"]
+            # Since mock_db returns same collection for all, we use side_effect
+            col.find_one = AsyncMock(return_value=active_team)
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 409
+        assert "R4" in resp.json()["detail"]
 
     async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to delete individuals (403)."""
         with override_deps(app, role="viewer"):
-            response = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 403
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 403
+
+    async def test_team_lead_is_forbidden(self, client: AsyncClient) -> None:
+        with override_deps(app, role="team_lead", team_id="team_001"):
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 403
+
+    async def test_returns_404_when_not_found(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            col.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
 # POST /individuals/{id}/avatar-upload-url
 # ---------------------------------------------------------------------------
-
 class TestAvatarUploadUrl:
-    """Tests for generating presigned S3 avatar upload URLs."""
 
-    async def test_returns_presigned_url(self, client: AsyncClient) -> None:
-        """Admin should receive a presigned URL and the S3 key."""
+    async def test_admin_gets_presigned_url(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin"):
             with patch("individuals.function.boto3") as mock_boto3:
                 with patch.dict("os.environ", {"S3_BUCKET": "test-bucket"}):
                     mock_s3 = MagicMock()
                     mock_boto3.client.return_value = mock_s3
-                    mock_s3.generate_presigned_url.return_value = (
-                        "https://s3.amazonaws.com/bucket/key?sig=abc"
-                    )
-                    response = await client.post(
-                        f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url"
-                    )
-        assert response.status_code == 200
-        data = response.json()
-        assert "upload_url" in data
-        assert "s3_key" in data
+                    mock_s3.generate_presigned_url.return_value = "https://s3.example.com/signed"
+                    resp = await client.post(f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "upload_url" in body
+        assert body["s3_key"].startswith("avatars/")
+        assert INDIVIDUAL_ID in body["s3_key"]
 
-    async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to request upload URLs (403)."""
+    async def test_user_can_request_own_upload(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer") as (_, _, user):
+            with patch("individuals.function.boto3") as mock_boto3:
+                with patch.dict("os.environ", {"S3_BUCKET": "test-bucket"}):
+                    mock_s3 = MagicMock()
+                    mock_boto3.client.return_value = mock_s3
+                    mock_s3.generate_presigned_url.return_value = "https://s3.example.com/signed"
+                    resp = await client.post(f"/individuals/{user.user_id}/avatar-upload-url")
+        assert resp.status_code == 200
+
+    async def test_viewer_cannot_upload_for_others(self, client: AsyncClient) -> None:
         with override_deps(app, role="viewer"):
-            response = await client.post(
-                f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url"
-            )
-        assert response.status_code == 403
+            resp = await client.post(f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url")
+        assert resp.status_code == 403
 
-
-# ---------------------------------------------------------------------------
-# GET /individuals/{id}
-# ---------------------------------------------------------------------------
-
-class TestGetIndividual:
-    """Tests for retrieving a single individual by ID."""
-
-    async def test_returns_404_when_not_found(self, client: AsyncClient) -> None:
-        """Should return 404 when the individual does not exist in the DB."""
+    async def test_missing_s3_bucket_returns_500(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin"):
-            response = await client.get(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 404
-
-    async def test_returns_individual_when_found(self, client: AsyncClient) -> None:
-        """Should return the individual document when it exists."""
-        doc = {
-            "_id": INDIVIDUAL_ID,
-            "firstName": "Alice",
-            "lastName": "Smith",
-            "email": "alice@acme.com",
-            "isActive": True,
-        }
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            collection.find_one = AsyncMock(return_value=doc)
-            response = await client.get(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# POST /individuals
-# ---------------------------------------------------------------------------
-
-class TestCreateIndividual:
-    """Tests for creating a new individual."""
-
-    async def test_admin_can_create(self, client: AsyncClient) -> None:
-        """system_admin should be able to create an individual (201)."""
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            collection.find_one = AsyncMock(return_value=None)  # email not taken
-            response = await client.post("/individuals", json=VALID_PAYLOAD)
-        assert response.status_code == 201
-
-    async def test_viewer_receives_403(self, client: AsyncClient) -> None:
-        """Non-admin roles should be rejected with 403."""
-        with override_deps(app, role="viewer"):
-            response = await client.post("/individuals", json=VALID_PAYLOAD)
-        assert response.status_code == 403
-
-    async def test_duplicate_email_returns_409(self, client: AsyncClient) -> None:
-        """Creating an individual with an existing email should return 409."""
-        existing = {"email": "alice@acme.com"}
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            collection.find_one = AsyncMock(return_value=existing)
-            response = await client.post("/individuals", json=VALID_PAYLOAD)
-        assert response.status_code == 409
-
-    async def test_invalid_staff_type_returns_422(self, client: AsyncClient) -> None:
-        """Invalid staffType enum value should return 422 (Pydantic validation)."""
-        payload = {**VALID_PAYLOAD, "staff_type": "InvalidType"}
-        with override_deps(app, role="system_admin"):
-            response = await client.post("/individuals", json=payload)
-        assert response.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# PATCH /individuals/{id}
-# ---------------------------------------------------------------------------
-
-class TestUpdateIndividual:
-    """Tests for partially updating an individual."""
-
-    async def test_admin_can_update(self, client: AsyncClient) -> None:
-        """system_admin should be able to patch an individual's job title."""
-        existing = {"_id": INDIVIDUAL_ID, "isActive": True}
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            collection.find_one = AsyncMock(return_value=existing)
-            response = await client.patch(
-                f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Senior Engineer"},
-            )
-        assert response.status_code == 200
-
-    async def test_viewer_receives_403(self, client: AsyncClient) -> None:
-        """Viewers should not be allowed to update individuals."""
-        with override_deps(app, role="viewer"):
-            response = await client.patch(
-                f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Senior Engineer"},
-            )
-        assert response.status_code == 403
-
-    async def test_returns_404_for_missing_individual(
-        self, client: AsyncClient
-    ) -> None:
-        """Should return 404 if the target individual does not exist."""
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            collection.find_one = AsyncMock(return_value=None)
-            collection.update_one = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
-            response = await client.patch(
-                f"/individuals/{INDIVIDUAL_ID}",
-                json={"job_title": "Engineer"},
-            )
-        assert response.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# DELETE /individuals/{id}  (soft-delete — R4)
-# ---------------------------------------------------------------------------
-
-class TestSoftDeleteIndividual:
-    """Tests for soft-deleting an individual (R4 — no hard deletes)."""
-
-    async def test_soft_delete_sets_inactive(self, client: AsyncClient) -> None:
-        """Admin soft-deleting sets isActive: false and returns 200."""
-        existing = {"_id": INDIVIDUAL_ID, "isActive": False}
-        with override_deps(app, role="system_admin") as (_, collection, _user):
-            # find_one: R4 check (teams) returns None, then final doc fetch returns existing
-            collection.find_one = AsyncMock(side_effect=[None, existing])
-            response = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 200
-
-    async def test_viewer_receives_403(self, client: AsyncClient) -> None:
-        """Viewers should not be allowed to delete individuals."""
-        with override_deps(app, role="viewer"):
-            response = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
-        assert response.status_code == 403
+            with patch.dict("os.environ", {"S3_BUCKET": ""}, clear=False):
+                resp = await client.post(f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url")
+        assert resp.status_code == 500
+        assert "S3_BUCKET" in resp.json()["detail"]

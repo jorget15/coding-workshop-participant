@@ -2,15 +2,28 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from '../../store'
-import { fetchIndividualsAsync } from '../../store/teamSlice'
+import { fetchIndividualsAsync, fetchLocationsAsync, createIndividualAsync } from '../../store/teamSlice'
+import FormModal from '../../components/FormModal'
+import { FormInput, FormSelect } from '../../components/FormField'
+import { useFormModal } from '../../hooks/useFormModal'
+import toast from 'react-hot-toast'
 
 export default function AdminIndividualList() {
   const dispatch = useDispatch<AppDispatch>()
-  const { individuals, loading } = useSelector((s: RootState) => s.teams)
+  const { individuals, locations, loading } = useSelector((s: RootState) => s.teams)
   const [search, setSearch] = useState('')
   const [staffFilter, setStaffFilter] = useState<'all'|'direct'|'non-direct'>('all')
 
-  useEffect(() => { dispatch(fetchIndividualsAsync()) }, [dispatch])
+  const modal = useFormModal(
+    { person_name: '', email: '', job_title: '', staff_type: 'direct', primary_location: '', password: '' },
+    createIndividualAsync as Parameters<typeof useFormModal>[1],
+    'Individual created'
+  )
+
+  useEffect(() => {
+    dispatch(fetchIndividualsAsync())
+    dispatch(fetchLocationsAsync())
+  }, [dispatch])
 
   const active = individuals.filter(i => !i.isDeleted)
   const filtered = active.filter(i => {
@@ -20,32 +33,30 @@ export default function AdminIndividualList() {
     return matchText && matchStaff
   })
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!modal.form.person_name.trim() || !modal.form.email.trim()) { toast.error('Name and email are required'); return }
+    if (!modal.form.password || modal.form.password.length < 8) { toast.error('Password must be at least 8 characters'); return }
+    modal.submit()
+  }
+
   return (
     <div className="flex flex-col gap-5 max-w-5xl">
       <div className="flex items-center justify-between">
         <h1 className="text-acme-heading text-2xl font-bold">Individuals</h1>
-        <button className="px-4 py-2 bg-acme-action text-white rounded-lg text-sm font-medium hover:bg-acme-blue transition-colors">
+        <button onClick={() => modal.setOpen(true)} className="px-4 py-2 bg-acme-action text-white rounded-lg text-sm font-medium hover:bg-acme-blue transition-colors">
           + Add Person
         </button>
       </div>
 
       <div className="flex gap-3 flex-wrap">
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search name or email…"
-          className="border border-acme-border rounded-lg px-3 py-2 text-sm bg-acme-card text-acme-text focus:outline-none focus:ring-2 focus:ring-acme-action flex-1 min-w-48"
-        />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or email…"
+          className="border border-acme-border rounded-lg px-3 py-2 text-sm bg-acme-card text-acme-text focus:outline-none focus:ring-2 focus:ring-acme-action flex-1 min-w-48" />
         {(['all','direct','non-direct'] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setStaffFilter(s)}
+          <button key={s} onClick={() => setStaffFilter(s)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-              staffFilter === s
-                ? 'bg-acme-action text-white border-acme-action'
-                : 'bg-acme-card text-acme-muted border-acme-border hover:border-acme-action'
-            }`}
-          >{s}</button>
+              staffFilter === s ? 'bg-acme-action text-white border-acme-action' : 'bg-acme-card text-acme-muted border-acme-border hover:border-acme-action'
+            }`}>{s}</button>
         ))}
       </div>
 
@@ -78,6 +89,19 @@ export default function AdminIndividualList() {
         </table>
         {!loading && filtered.length === 0 && <p className="text-acme-muted text-sm p-4">No individuals match.</p>}
       </div>
+
+      <FormModal open={modal.open} onClose={modal.reset} title="Add Individual" submitting={modal.submitting} onSubmit={handleSubmit} submitLabel="Add Person">
+        <FormInput label="Full Name *" value={modal.form.person_name} onChange={v => modal.field('person_name', v)} required />
+        <FormInput label="Email *" value={modal.form.email} onChange={v => modal.field('email', v)} type="email" required />
+        <FormInput label="Password *" value={modal.form.password} onChange={v => modal.field('password', v)} type="password" required />
+        <div className="grid grid-cols-2 gap-4">
+          <FormInput label="Job Title" value={modal.form.job_title} onChange={v => modal.field('job_title', v)} />
+          <FormSelect label="Staff Type" value={modal.form.staff_type} onChange={v => modal.field('staff_type', v)}
+            options={[{ value: 'direct', label: 'Direct' }, { value: 'non-direct', label: 'Non-Direct' }]} />
+        </div>
+        <FormSelect label="Location" value={modal.form.primary_location} onChange={v => modal.field('primary_location', v)}
+          placeholder="Select location…" options={locations.map(l => ({ value: l._id, label: `${l.name} — ${l.city}` }))} />
+      </FormModal>
     </div>
   )
 }

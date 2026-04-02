@@ -39,9 +39,19 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
 
+  # SPA fallback — S3 returns 403 for missing objects (no public listing),
+  # and 404 when the key genuinely doesn't exist. Both must serve index.html
+  # so React Router can handle client-side routes like /login, /admin, etc.
+  custom_error_response {
+    error_code            = 403
+    error_caching_min_ttl = 0
+    response_code         = 200
+    response_page_path    = "/index.html"
+  }
+
   custom_error_response {
     error_code            = 404
-    error_caching_min_ttl = 300
+    error_caching_min_ttl = 0
     response_code         = 200
     response_page_path    = "/index.html"
   }

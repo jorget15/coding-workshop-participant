@@ -76,14 +76,11 @@ export interface Achievement {
 }
 
 export interface AchievementInput {
-  teamId: string | null
+  team_id: string | null
   title: string
   description: string
-  achievementMonth: string
-  impactMetric: string
-  tags: string[]
-  contributors: { personId: string; personName: string }[]
-  proofLink?: string
+  achievement_date: string
+  awarded_to: string[]
 }
 
 interface TeamState {
@@ -171,22 +168,147 @@ export const createAchievementAsync = createAsyncThunk(
   }
 )
 
+/* ── Team CRUD ── */
+
+export const createTeamAsync = createAsyncThunk(
+  'teams/createTeam',
+  async (payload: { team_name: string; description: string; location_id: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.post('/teams', payload)
+      return res.data as Team
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create team')
+    }
+  }
+)
+
+export const updateTeamAsync = createAsyncThunk(
+  'teams/updateTeam',
+  async ({ id, ...payload }: { id: string; team_name?: string; description?: string; location_id?: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.patch(`/teams/${id}`, payload)
+      return res.data as Team
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update team')
+    }
+  }
+)
+
+export const closeTeamAsync = createAsyncThunk(
+  'teams/closeTeam',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const res = await api.post(`/teams/${id}/close`)
+      return res.data as Team
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to close team')
+    }
+  }
+)
+
+export const addMemberAsync = createAsyncThunk(
+  'teams/addMember',
+  async ({ teamId, ...payload }: { teamId: string; person_id: string; member_role: MemberRole }, { rejectWithValue }) => {
+    try {
+      const res = await api.post(`/teams/${teamId}/members`, payload)
+      return res.data as Team
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to add member')
+    }
+  }
+)
+
+export const removeMemberAsync = createAsyncThunk(
+  'teams/removeMember',
+  async ({ teamId, personId }: { teamId: string; personId: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.delete(`/teams/${teamId}/members/${personId}`)
+      return res.data as Team
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to remove member')
+    }
+  }
+)
+
+/* ── Individual CRUD ── */
+
+export const createIndividualAsync = createAsyncThunk(
+  'teams/createIndividual',
+  async (payload: { person_name: string; email: string; primary_location: string; staff_type: StaffType; job_title: string; password: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.post('/individuals', payload)
+      return res.data as Individual
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create individual')
+    }
+  }
+)
+
+export const updateIndividualAsync = createAsyncThunk(
+  'teams/updateIndividual',
+  async ({ id, ...payload }: { id: string; person_name?: string; email?: string; primary_location?: string; staff_type?: StaffType; job_title?: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.patch(`/individuals/${id}`, payload)
+      return res.data as Individual
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update individual')
+    }
+  }
+)
+
+export const deactivateIndividualAsync = createAsyncThunk(
+  'teams/deactivateIndividual',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const res = await api.delete(`/individuals/${id}`)
+      return res.data as Individual
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to deactivate individual')
+    }
+  }
+)
+
+/* ── Location CRUD ── */
+
+export const createLocationAsync = createAsyncThunk(
+  'teams/createLocation',
+  async (payload: Omit<Location, '_id'>, { rejectWithValue }) => {
+    try {
+      const res = await api.post('/metadata/locations', payload)
+      return res.data as Location
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to create location')
+    }
+  }
+)
+
+export const updateLocationAsync = createAsyncThunk(
+  'teams/updateLocation',
+  async ({ id, ...payload }: { id: string; name?: string; city?: string; country?: string; region?: Region; timezone?: string }, { rejectWithValue }) => {
+    try {
+      const res = await api.patch(`/metadata/locations/${id}`, payload)
+      return res.data as Location
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      return rejectWithValue(axiosErr.response?.data?.detail ?? 'Failed to update location')
+    }
+  }
+)
+
 const teamSlice = createSlice({
   name: 'teams',
   initialState,
-  reducers: {
-    seedMockData(state, action: import('@reduxjs/toolkit').PayloadAction<{
-      teams?: Team[]
-      individuals?: Individual[]
-      locations?: Location[]
-      achievements?: Achievement[]
-    }>) {
-      if (action.payload.teams)        state.teams        = action.payload.teams
-      if (action.payload.individuals)  state.individuals  = action.payload.individuals
-      if (action.payload.locations)    state.locations    = action.payload.locations
-      if (action.payload.achievements) state.achievements = action.payload.achievements
-    },
-  },
+  reducers: {},
+
   extraReducers: (builder) => {
     builder
       .addCase(fetchTeamsAsync.pending,       (state) => { state.loading = true; state.error = null })
@@ -202,8 +324,21 @@ const teamSlice = createSlice({
       .addCase(fetchAchievementsAsync.fulfilled, (state, action) => { state.loading = false; state.achievements = Array.isArray(action.payload) ? action.payload : [] })
       .addCase(fetchAchievementsAsync.rejected,  (state, action) => { state.loading = false; state.error = action.payload as string })
       .addCase(createAchievementAsync.fulfilled, (state, action) => { state.achievements.unshift(action.payload) })
+      // Team CRUD
+      .addCase(createTeamAsync.fulfilled,  (state, action) => { state.teams.push(action.payload) })
+      .addCase(updateTeamAsync.fulfilled,  (state, action) => { const i = state.teams.findIndex(t => t._id === action.payload._id); if (i >= 0) state.teams[i] = action.payload })
+      .addCase(closeTeamAsync.fulfilled,   (state, action) => { const i = state.teams.findIndex(t => t._id === action.payload._id); if (i >= 0) state.teams[i] = action.payload })
+      .addCase(addMemberAsync.fulfilled,   (state, action) => { const i = state.teams.findIndex(t => t._id === action.payload._id); if (i >= 0) state.teams[i] = action.payload })
+      .addCase(removeMemberAsync.fulfilled,(state, action) => { const i = state.teams.findIndex(t => t._id === action.payload._id); if (i >= 0) state.teams[i] = action.payload })
+      // Individual CRUD
+      .addCase(createIndividualAsync.fulfilled,     (state, action) => { state.individuals.push(action.payload) })
+      .addCase(updateIndividualAsync.fulfilled,     (state, action) => { const i = state.individuals.findIndex(p => p._id === action.payload._id); if (i >= 0) state.individuals[i] = action.payload })
+      .addCase(deactivateIndividualAsync.fulfilled, (state, action) => { const i = state.individuals.findIndex(p => p._id === action.payload._id); if (i >= 0) state.individuals[i] = action.payload })
+      // Location CRUD
+      .addCase(createLocationAsync.fulfilled, (state, action) => { state.locations.push(action.payload) })
+      .addCase(updateLocationAsync.fulfilled, (state, action) => { const i = state.locations.findIndex(l => l._id === action.payload._id); if (i >= 0) state.locations[i] = action.payload })
   },
 })
 
-export const { seedMockData } = teamSlice.actions
+export const {} = teamSlice.actions
 export default teamSlice.reducer

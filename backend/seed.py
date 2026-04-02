@@ -122,7 +122,7 @@ async def seed() -> None:
     port = int(os.getenv("MONGO_PORT", "27017"))
     user = os.getenv("MONGO_USER", "")
     passwd = os.getenv("MONGO_PASS", "")
-    db_name = os.getenv("DB_NAME", "acme_team_mgmt")
+    db_name = os.getenv("MONGO_NAME", "acme_team_mgmt")
 
     if user and passwd:
         uri = f"mongodb://{user}:{passwd}@{host}:{port}/"

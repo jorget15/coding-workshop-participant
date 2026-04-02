@@ -8,8 +8,8 @@ Provides:
     - Static enum values for dropdowns (staff types, member roles, team statuses)
 
 Environment variables:
-    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
-    DB_NAME           - Database name (default: acme_team_mgmt).
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / MONGO_NAME - DocumentDB connection (injected by Terraform).
+    MONGO_NAME           - Database name (default: acme_team_mgmt).
     JWT_SECRET        - Secret used to verify Bearer tokens.
     JWT_ALGORITHM     - JWT algorithm (default: HS256).
     ALLOWED_ORIGINS   - Comma-separated CORS origins.
@@ -18,8 +18,6 @@ Environment variables:
 import os
 from typing import Optional
 
-from bson import ObjectId
-from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
@@ -28,6 +26,9 @@ from pydantic import BaseModel, Field
 
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
+from shared.logging import get_logger
+
+logger = get_logger("metadata")
 
 
 def _doc(d: dict) -> dict:
@@ -35,12 +36,6 @@ def _doc(d: dict) -> dict:
         d["_id"] = str(d["_id"])
     return d
 
-
-def _oid(value: str) -> ObjectId:
-    try:
-        return ObjectId(value)
-    except (InvalidId, Exception):
-        raise HTTPException(status_code=400, detail=f"Invalid id format: '{value}'.")
 
 # ---------------------------------------------------------------------------
 # Standalone FastAPI app
@@ -69,6 +64,7 @@ router = APIRouter()
 class LocationCreate(BaseModel):
     """Payload for creating a new location."""
 
+    name: str = Field(..., min_length=1)
     city: str = Field(..., min_length=1)
     country: str = Field(..., min_length=1)
     region: Optional[str] = None
@@ -78,6 +74,7 @@ class LocationCreate(BaseModel):
 class LocationUpdate(BaseModel):
     """All fields optional — PATCH semantics."""
 
+    name: Optional[str] = None
     city: Optional[str] = None
     country: Optional[str] = None
     region: Optional[str] = None
@@ -95,6 +92,7 @@ async def list_locations(
 ) -> list:
     """Return all locations sorted by country then city."""
     docs = await db["locations"].find({}).sort([("country", 1), ("city", 1)]).to_list(500)
+    logger.info("Listed locations", extra={"count": len(docs)})
     return [_doc(d) for d in docs]
 
 
@@ -105,7 +103,7 @@ async def get_location(
     _user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Return a single location by _id."""
-    doc = await db["locations"].find_one({"_id": _oid(location_id)})
+    doc = await db["locations"].find_one({"_id": location_id})
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -127,6 +125,7 @@ async def create_location(
             detail=f"Location '{payload.city}, {payload.country}' already exists.",
         )
     doc = {
+        "name": payload.name,
         "city": payload.city,
         "country": payload.country,
         "region": payload.region,
@@ -134,6 +133,7 @@ async def create_location(
     }
     result = await db["locations"].insert_one(doc)
     doc["_id"] = result.inserted_id
+    logger.info("Created location", extra={"location_id": str(result.inserted_id), "city": payload.city, "country": payload.country})
     return _doc(doc)
 
 
@@ -144,17 +144,16 @@ async def update_location(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """Update a location's details (system_admin only)."""
-    oid = _oid(location_id)
     updates = payload.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
-    result = await db["locations"].update_one({"_id": oid}, {"$set": updates})
+    result = await db["locations"].update_one({"_id": location_id}, {"$set": updates})
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Location '{location_id}' not found.",
         )
-    doc = await db["locations"].find_one({"_id": oid})
+    doc = await db["locations"].find_one({"_id": location_id})
     return _doc(doc)
 
 
@@ -164,14 +163,13 @@ async def delete_location(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """Soft-archive a location (system_admin only). Sets isActive: false."""
-    oid = _oid(location_id)
-    result = await db["locations"].update_one({"_id": oid}, {"$set": {"isActive": False}})
+    result = await db["locations"].update_one({"_id": location_id}, {"$set": {"isActive": False}})
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Location '{location_id}' not found.",
         )
-    doc = await db["locations"].find_one({"_id": oid})
+    doc = await db["locations"].find_one({"_id": location_id})
     return _doc(doc)
 
 
@@ -192,9 +190,8 @@ async def get_enums() -> dict:
         - Consider moving to a config file if enums grow significantly.
     """
     return {
-        "staff_types": ["Contractor", "Employee", "Consultant"],
+        "staff_types": ["direct", "non-direct"],
         "member_roles": ["Team Leader", "Member", "Delegate"],
-        "team_statuses": ["Active", "Closed"],
         "user_roles": ["system_admin", "team_lead", "editor", "viewer"],
     }
 

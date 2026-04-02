@@ -67,7 +67,7 @@ locals {
     MONGO_PORT    = data.aws_caller_identity.this.id == "000000000000" ? "27017" : element(aws_docdb_cluster.this.*.port, 0)
     MONGO_USER    = data.aws_caller_identity.this.id == "000000000000" ? "mongo" : element(aws_docdb_cluster.this.*.master_username, 0)
     MONGO_PASS    = data.aws_caller_identity.this.id == "000000000000" ? "mongo123!" : element(aws_docdb_cluster.this.*.master_password, 0)
-    DB_NAME       = "acme_team_mgmt"
+    MONGO_NAME    = "acme_team_mgmt"
     # JWT signing — override aws_jwt_secret in tfvars for production
     JWT_SECRET    = var.aws_jwt_secret
     POSTGRES_HOST = data.aws_caller_identity.this.id == "000000000000" ? "localhost" : element(aws_rds_cluster.this.*.endpoint, 0)

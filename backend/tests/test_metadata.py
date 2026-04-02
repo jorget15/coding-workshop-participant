@@ -2,12 +2,12 @@
 Pytest tests for the Metadata Lambda (``metadata/function.py``).
 
 Coverage:
-    - GET  /enums                — static dropdown values (no DB call)
-    - GET  /locations            — list all locations
-    - GET  /locations/{id}       — get by ID (found / not-found)
-    - POST /locations            — create (admin only)
-    - PATCH /locations/{id}      — update (admin only)
-    - DELETE /locations/{id}     — soft-delete (admin only)
+    - GET    /metadata/enums                — static values (public, no auth required)
+    - GET    /metadata/locations             — list (viewer, admin)
+    - GET    /metadata/locations/{id}        — get (found, 404)
+    - POST   /metadata/locations             — create (admin, viewer 403, dup 409, missing city 422)
+    - PATCH  /metadata/locations/{id}        — update (admin, viewer 403, 404, empty 400)
+    - DELETE /metadata/locations/{id}        — soft-delete (admin, viewer 403, 404)
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -20,16 +20,19 @@ from tests.conftest import override_deps
 
 pytestmark = pytest.mark.asyncio
 
-LOCATION_ID = "807f1f77bcf86cd799439044"
+LOCATION_ID = "loc_hq"
 
 EXISTING_LOCATION = {
     "_id": LOCATION_ID,
+    "name": "NYC HQ",
     "city": "New York",
     "country": "USA",
+    "region": "Northeast",
     "isActive": True,
 }
 
 VALID_PAYLOAD = {
+    "name": "SF Office",
     "city": "San Francisco",
     "country": "USA",
 }
@@ -37,168 +40,166 @@ VALID_PAYLOAD = {
 
 @pytest.fixture
 async def client() -> AsyncClient:
-    """Async HTTPX client wired to the Metadata Lambda app."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         yield c
 
 
 # ---------------------------------------------------------------------------
-# GET /enums
+# GET /metadata/enums
 # ---------------------------------------------------------------------------
-
 class TestEnums:
-    """Tests for the static enums endpoint."""
 
     async def test_returns_200_without_auth(self, client: AsyncClient) -> None:
         """Enums endpoint is public — no auth required."""
-        response = await client.get("/metadata/enums")
-        assert response.status_code == 200
+        resp = await client.get("/metadata/enums")
+        assert resp.status_code == 200
 
-    async def test_response_contains_required_keys(self, client: AsyncClient) -> None:
-        """Response must include staff_types and member_roles keys."""
-        response = await client.get("/metadata/enums")
-        data = response.json()
+    async def test_contains_required_keys(self, client: AsyncClient) -> None:
+        resp = await client.get("/metadata/enums")
+        data = resp.json()
         assert "staff_types" in data
         assert "member_roles" in data
+        assert "user_roles" in data
 
-    async def test_staff_types_are_correct(self, client: AsyncClient) -> None:
-        """staff_types must exactly match the schema enum values."""
-        response = await client.get("/metadata/enums")
-        assert set(response.json()["staff_types"]) == {
-            "Employee", "Contractor", "Consultant"
-        }
+    async def test_staff_types_match_schema(self, client: AsyncClient) -> None:
+        resp = await client.get("/metadata/enums")
+        assert set(resp.json()["staff_types"]) == {"direct", "non-direct"}
 
-    async def test_member_roles_are_correct(self, client: AsyncClient) -> None:
-        """member_roles must exactly match the schema enum values."""
-        response = await client.get("/metadata/enums")
-        assert set(response.json()["member_roles"]) == {
-            "Team Leader", "Member", "Delegate"
-        }
+    async def test_member_roles_match_schema(self, client: AsyncClient) -> None:
+        resp = await client.get("/metadata/enums")
+        assert set(resp.json()["member_roles"]) == {"Team Leader", "Member", "Delegate"}
+
+    async def test_user_roles_match_schema(self, client: AsyncClient) -> None:
+        resp = await client.get("/metadata/enums")
+        assert set(resp.json()["user_roles"]) == {"system_admin", "team_lead", "editor", "viewer"}
 
 
 # ---------------------------------------------------------------------------
-# GET /locations
+# GET /metadata/locations
 # ---------------------------------------------------------------------------
-
 class TestListLocations:
-    """Tests for listing all locations."""
 
     async def test_viewer_receives_200_and_list(self, client: AsyncClient) -> None:
-        """Viewers should be able to list all locations."""
         with override_deps(app, role="viewer"):
-            response = await client.get("/metadata/locations")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+            resp = await client.get("/metadata/locations")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
-    async def test_admin_receives_200_and_list(self, client: AsyncClient) -> None:
-        """Admin should also be able to list all locations."""
+    async def test_admin_receives_200(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin"):
-            response = await client.get("/metadata/locations")
-        assert response.status_code == 200
+            resp = await client.get("/metadata/locations")
+        assert resp.status_code == 200
+
+    async def test_unauthenticated_is_rejected(self, client: AsyncClient) -> None:
+        resp = await client.get("/metadata/locations")
+        assert resp.status_code in (401, 403)
 
 
 # ---------------------------------------------------------------------------
-# GET /locations/{id}
+# GET /metadata/locations/{id}
 # ---------------------------------------------------------------------------
-
 class TestGetLocation:
-    """Tests for retrieving a single location by ID."""
 
     async def test_returns_location_when_found(self, client: AsyncClient) -> None:
-        """Should return the location document when it exists."""
-        with override_deps(app, role="viewer") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
-            response = await client.get(f"/metadata/locations/{LOCATION_ID}")
-        assert response.status_code == 200
-        assert response.json()["city"] == "New York"
+        with override_deps(app, role="viewer") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
+            resp = await client.get(f"/metadata/locations/{LOCATION_ID}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["city"] == "New York"
+        assert body["country"] == "USA"
 
     async def test_returns_404_when_not_found(self, client: AsyncClient) -> None:
-        """Should return 404 when no location matches the given ID."""
-        with override_deps(app, role="viewer") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=None)
-            response = await client.get(f"/metadata/locations/{LOCATION_ID}")
-        assert response.status_code == 404
+        with override_deps(app, role="viewer") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            resp = await client.get(f"/metadata/locations/{LOCATION_ID}")
+        assert resp.status_code == 404
+        assert LOCATION_ID in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
-# POST /locations
+# POST /metadata/locations
 # ---------------------------------------------------------------------------
-
 class TestCreateLocation:
-    """Tests for creating a new location."""
 
     async def test_admin_can_create(self, client: AsyncClient) -> None:
-        """Admin should be able to create a new location (201)."""
-        with override_deps(app, role="system_admin"):
-            response = await client.post("/metadata/locations", json=VALID_PAYLOAD)
-        assert response.status_code == 201
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)  # no duplicate
+            resp = await client.post("/metadata/locations", json=VALID_PAYLOAD)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["city"] == "San Francisco"
+        assert body["country"] == "USA"
+
+    async def test_duplicate_location_returns_409(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
+            resp = await client.post("/metadata/locations", json=VALID_PAYLOAD)
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]
 
     async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to create locations (403)."""
         with override_deps(app, role="viewer"):
-            response = await client.post("/metadata/locations", json=VALID_PAYLOAD)
-        assert response.status_code == 403
+            resp = await client.post("/metadata/locations", json=VALID_PAYLOAD)
+        assert resp.status_code == 403
 
     async def test_missing_city_rejected(self, client: AsyncClient) -> None:
-        """Payload without city must be rejected with 422."""
         with override_deps(app, role="system_admin"):
-            response = await client.post("/metadata/locations", json={"country": "USA"})
-        assert response.status_code == 422
+            resp = await client.post("/metadata/locations", json={"country": "USA"})
+        assert resp.status_code == 422
+
+    async def test_missing_country_rejected(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.post("/metadata/locations", json={"city": "Austin"})
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# PATCH /locations/{id}
+# PATCH /metadata/locations/{id}
 # ---------------------------------------------------------------------------
-
 class TestUpdateLocation:
-    """Tests for partially updating a location."""
 
     async def test_admin_can_update(self, client: AsyncClient) -> None:
-        """Admin should be able to patch an existing location (200)."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
-            response = await client.patch(
-                f"/metadata/locations/{LOCATION_ID}", json={"city": "Brooklyn"}
-            )
-        assert response.status_code == 200
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
+            resp = await client.patch(f"/metadata/locations/{LOCATION_ID}", json={"city": "Brooklyn"})
+        assert resp.status_code == 200
 
     async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to update locations (403)."""
         with override_deps(app, role="viewer"):
-            response = await client.patch(
-                f"/metadata/locations/{LOCATION_ID}", json={"city": "Brooklyn"}
-            )
-        assert response.status_code == 403
+            resp = await client.patch(f"/metadata/locations/{LOCATION_ID}", json={"city": "X"})
+        assert resp.status_code == 403
 
-    async def test_returns_404_for_missing_location(self, client: AsyncClient) -> None:
-        """Patching a non-existent location should return 404."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.update_one = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
-            response = await client.patch(
-                f"/metadata/locations/{LOCATION_ID}", json={"city": "Nowhere"}
-            )
-        assert response.status_code == 404
+    async def test_returns_404_for_missing(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
+            resp = await client.patch(f"/metadata/locations/{LOCATION_ID}", json={"city": "Nowhere"})
+        assert resp.status_code == 404
+
+    async def test_empty_payload_rejected(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin"):
+            resp = await client.patch(f"/metadata/locations/{LOCATION_ID}", json={})
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
-# DELETE /locations/{id}  (soft-delete)
+# DELETE /metadata/locations/{id}  (soft-delete)
 # ---------------------------------------------------------------------------
-
 class TestSoftDeleteLocation:
-    """Tests for soft-deleting a location."""
 
     async def test_admin_can_soft_delete(self, client: AsyncClient) -> None:
-        """Admin should be able to soft-delete (set isActive: false) — returns 200."""
-        with override_deps(app, role="system_admin") as (mock_db, mock_col, _):
-            mock_col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
-            response = await client.delete(f"/metadata/locations/{LOCATION_ID}")
-        assert response.status_code == 200
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=EXISTING_LOCATION)
+            resp = await client.delete(f"/metadata/locations/{LOCATION_ID}")
+        assert resp.status_code == 200
 
     async def test_viewer_is_forbidden(self, client: AsyncClient) -> None:
-        """Viewers must not be permitted to delete locations (403)."""
         with override_deps(app, role="viewer"):
-            response = await client.delete(f"/metadata/locations/{LOCATION_ID}")
-        assert response.status_code == 403
+            resp = await client.delete(f"/metadata/locations/{LOCATION_ID}")
+        assert resp.status_code == 403
+
+    async def test_returns_404_for_missing(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
+            resp = await client.delete(f"/metadata/locations/{LOCATION_ID}")
+        assert resp.status_code == 404

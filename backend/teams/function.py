@@ -12,8 +12,8 @@ Business rules enforced here:
     [R10] A Team Leader cannot be an active member of any other team.
 
 Environment variables:
-    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
-    DB_NAME           - Database name (default: acme_team_mgmt).
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / MONGO_NAME - DocumentDB connection (injected by Terraform).
+    MONGO_NAME           - Database name (default: acme_team_mgmt).
     JWT_SECRET        - Secret used to verify Bearer tokens.
     JWT_ALGORITHM     - JWT algorithm (default: HS256).
     ALLOWED_ORIGINS   - Comma-separated CORS origins.
@@ -33,6 +33,9 @@ from pydantic import BaseModel, Field
 
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
+from shared.logging import get_logger
+
+logger = get_logger("teams")
 
 
 def _doc(d: dict) -> dict:
@@ -76,7 +79,7 @@ router = APIRouter()
 class MemberEntry(BaseModel):
     """Represents one member entry inside a team's members array."""
 
-    individual_id: str
+    person_id: str
     member_role: str = Field(..., pattern="^(Team Leader|Member|Delegate)$")
 
 
@@ -84,16 +87,16 @@ class TeamCreate(BaseModel):
     """Payload for creating a new team."""
 
     team_name: str = Field(..., min_length=1)
+    description: Optional[str] = None
     location_id: Optional[str] = None
-    org_leader_id: Optional[str] = None
 
 
 class TeamUpdate(BaseModel):
     """All fields optional — PATCH semantics."""
 
     team_name: Optional[str] = None
+    description: Optional[str] = None
     location_id: Optional[str] = None
-    org_leader_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -107,12 +110,12 @@ async def list_teams(
     location_id: Optional[str] = None,
     search: Optional[str] = None,
 ) -> list:
-    """Return all active teams. team_lead role sees only their own team."""
-    query: dict = {"status": {"$ne": "Closed"}}
+    """Return all active (non-deleted) teams."""
+    query: dict = {"isDeleted": {"$ne": True}}
     if user.role == "team_lead" and user.team_id:
-        query["_id"] = _oid(user.team_id)
+        query["_id"] = user.team_id
     if location_id:
-        query["locationId"] = location_id
+        query["primaryLocation"] = location_id
     if search:
         query["teamName"] = {"$regex": search, "$options": "i"}
     docs = await db["teams"].find(query).to_list(200)
@@ -126,7 +129,7 @@ async def get_team(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Return a single team by _id, including its members array."""
-    doc = await db["teams"].find_one({"_id": _oid(team_id)})
+    doc = await db["teams"].find_one({"_id": team_id})
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -141,17 +144,22 @@ async def create_team(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """Create a new team (system_admin only)."""
+    now = datetime.now(timezone.utc).isoformat()
     doc = {
         "teamName": payload.team_name,
-        "locationId": payload.location_id,
-        "orgLeaderId": payload.org_leader_id,
-        "status": "Active",
+        "description": payload.description or "",
+        "primaryLocation": payload.location_id,
         "members": [],
         "reportingHistory": [],
-        "createdAt": datetime.now(timezone.utc),
+        "teamHistory": [{"eventType": "TEAM_CREATED", "description": f"{payload.team_name} created.", "occurredAt": now}],
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": now,
+        "updatedAt": now,
     }
     result = await db["teams"].insert_one(doc)
     doc["_id"] = result.inserted_id
+    logger.info("Created team", extra={"team_id": str(result.inserted_id), "team_name": payload.team_name})
     return _doc(doc)
 
 
@@ -161,29 +169,17 @@ async def update_team(
     payload: TeamUpdate,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
-    """Update team metadata (system_admin only). Appends to reportingHistory on leader change."""
-    oid = _oid(team_id)
+    """Update team metadata (system_admin only)."""
     updates = payload.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
-    field_map = {"team_name": "teamName", "location_id": "locationId", "org_leader_id": "orgLeaderId"}
+    field_map = {"team_name": "teamName", "location_id": "primaryLocation", "description": "description"}
     set_dict = {field_map.get(k, k): v for k, v in updates.items()}
-    # Track org leader change in reportingHistory
-    push_ops: dict = {}
-    if "orgLeaderId" in set_dict:
-        existing = await db["teams"].find_one({"_id": oid}, {"orgLeaderId": 1})
-        if existing and existing.get("orgLeaderId") != set_dict["orgLeaderId"]:
-            push_ops["reportingHistory"] = {
-                "leaderId": existing.get("orgLeaderId"),
-                "endDate": datetime.now(timezone.utc),
-            }
-    update_op: dict = {"$set": set_dict}
-    if push_ops:
-        update_op["$push"] = push_ops
-    result = await db["teams"].update_one({"_id": oid}, update_op)
+    set_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
+    result = await db["teams"].update_one({"_id": team_id}, {"$set": set_dict})
     if result.matched_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{team_id}' not found.")
-    doc = await db["teams"].find_one({"_id": oid})
+    doc = await db["teams"].find_one({"_id": team_id})
     return _doc(doc)
 
 
@@ -193,18 +189,18 @@ async def close_team(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> None:
     """Soft-delete a team (R5 — no hard deletes). Sets endDate on all active members."""
-    oid = _oid(team_id)
-    now = datetime.now(timezone.utc)
-    # Close all active member entries first
+    now = datetime.now(timezone.utc).isoformat()
     await db["teams"].update_one(
-        {"_id": oid},
+        {"_id": team_id},
         {"$set": {
-            "status": "Closed",
+            "isDeleted": True,
+            "deletedAt": now,
+            "updatedAt": now,
             "members.$[active].endDate": now,
         }},
         array_filters=[{"active.endDate": None}],
     )
-    result = await db["teams"].find_one({"_id": oid})
+    result = await db["teams"].find_one({"_id": team_id})
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{team_id}' not found.")
 
@@ -221,58 +217,69 @@ async def add_member(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="system_admin or team_lead role required.")
     if user.role == "team_lead" and user.team_id != team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You may only manage members of your own team.")
-    oid = _oid(team_id)
-    team = await db["teams"].find_one({"_id": oid})
+    team = await db["teams"].find_one({"_id": team_id})
     if not team:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{team_id}' not found.")
-    if team.get("status") == "Closed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="R5: cannot add members to a closed team.")
+    if team.get("isDeleted"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="R5: cannot add members to a deleted team.")
     active_members = [m for m in team.get("members", []) if m.get("endDate") is None]
     # R1: max 5 active Members (Team Leader excluded from count)
     if payload.member_role == "Member":
         member_count = sum(1 for m in active_members if m.get("memberRole") == "Member")
         if member_count >= 5:
+            logger.warning("R1 violation: team at capacity", extra={"team_id": team_id, "member_count": member_count})
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="R1: team is at capacity (5 active Members).",
+                detail=f"R1: team '{team_id}' is at capacity ({member_count}/5 active members).",
             )
     # R2: only one active Team Leader per team
     if payload.member_role == "Team Leader":
         if any(m.get("memberRole") == "Team Leader" for m in active_members):
+            logger.warning("R2 violation: team already has leader", extra={"team_id": team_id, "person_id": payload.person_id})
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="R2: team already has an active Team Leader.",
+                detail=f"R2: team '{team_id}' already has an active Team Leader.",
             )
         # R10: a Team Leader cannot be an active leader on any other team
         other_team = await db["teams"].find_one({
-            "_id": {"$ne": oid},
-            "status": {"$ne": "Closed"},
+            "_id": {"$ne": team_id},
+            "isDeleted": {"$ne": True},
             "members": {"$elemMatch": {
-                "individualId": payload.individual_id,
+                "personId": payload.person_id,
                 "memberRole": "Team Leader",
                 "endDate": None,
             }},
         })
         if other_team:
+            logger.warning("R10 violation: leader on another team", extra={"person_id": payload.person_id, "other_team_id": str(other_team.get("_id"))})
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="R10: this individual is already an active Team Leader on another team.",
+                detail=f"R10: person '{payload.person_id}' is already an active Team Leader on team '{other_team.get('_id')}'.",
             )
+    now = datetime.now(timezone.utc).isoformat()
+    # Look up the individual for their name and staffType
+    individual = await db["individuals"].find_one({"_id": payload.person_id})
     entry = {
-        "individualId": payload.individual_id,
+        "personId": payload.person_id,
+        "personName": individual["personName"] if individual else payload.person_id,
         "memberRole": payload.member_role,
-        "startDate": datetime.now(timezone.utc),
+        "staffTypeSnapshot": individual.get("staffType", "direct") if individual else "direct",
+        "startDate": now,
         "endDate": None,
     }
-    await db["teams"].update_one({"_id": oid}, {"$push": {"members": entry}})
-    doc = await db["teams"].find_one({"_id": oid})
+    await db["teams"].update_one({"_id": team_id}, {
+        "$push": {"members": entry},
+        "$set": {"updatedAt": now},
+    })
+    logger.info("Added member to team", extra={"team_id": team_id, "person_id": payload.person_id, "role": payload.member_role})
+    doc = await db["teams"].find_one({"_id": team_id})
     return _doc(doc)
 
 
-@router.delete("/{team_id}/members/{individual_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{team_id}/members/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     team_id: str,
-    individual_id: str,
+    person_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
@@ -281,17 +288,16 @@ async def remove_member(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="system_admin or team_lead role required.")
     if user.role == "team_lead" and user.team_id != team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You may only manage members of your own team.")
-    oid = _oid(team_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).isoformat()
     result = await db["teams"].update_one(
-        {"_id": oid, "members": {"$elemMatch": {"individualId": individual_id, "endDate": None}}},
-        {"$set": {"members.$[entry].endDate": now}},
-        array_filters=[{"entry.individualId": individual_id, "entry.endDate": None}],
+        {"_id": team_id, "members": {"$elemMatch": {"personId": person_id, "endDate": None}}},
+        {"$set": {"members.$[entry].endDate": now, "updatedAt": now}},
+        array_filters=[{"entry.personId": person_id, "entry.endDate": None}],
     )
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Active member '{individual_id}' not found on team '{team_id}'.",
+            detail=f"Active member '{person_id}' not found on team '{team_id}'.",
         )
 
 

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
-import { toast } from 'react-toastify'
+import toast from 'react-hot-toast'
 import type { AppDispatch, RootState } from '../store'
 import { loginAsync } from '../store/authSlice'
 

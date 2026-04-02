@@ -4,14 +4,12 @@ Individuals Lambda — standalone FastAPI app for the ``individuals`` service.
 Lambda URL: set INDIVIDUALS_LAMBDA_URL in the frontend .env.local.
 
 Business rules enforced here:
-    [R4]  An individual can only be soft-deleted (isActive: false); no hard deletes.
-    [R6]  staffType must be one of: Contractor, Employee, Consultant.
+    [R4]  An individual can only be soft-deleted (isDeleted: true); no hard deletes.
     [R10] A Team Leader cannot simultaneously be a member of another team
           (enforced at the teams layer but validated here on profile updates).
 
 Environment variables:
-    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
-    DB_NAME           - Database name (default: acme_team_mgmt).
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / MONGO_NAME - DocumentDB connection (injected by Terraform).
     JWT_SECRET        - Secret used to verify Bearer tokens.
     JWT_ALGORITHM     - JWT algorithm (default: HS256).
     S3_BUCKET         - S3 bucket name for profile pictures.
@@ -24,94 +22,55 @@ from typing import Optional
 
 import boto3
 from bson import ObjectId
-from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, status
 from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
-import hashlib as _hashlib
-import secrets as _secrets
 from pydantic import BaseModel, EmailStr, Field
 
+from shared import create_app, doc, hash_password, oid
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
+from shared.logging import get_logger
 
-
-def _hash_password(plain: str) -> str:
-    """Hash a plaintext password with PBKDF2-SHA256 (stdlib, no C deps)."""
-    salt = _secrets.token_hex(16)
-    dk = _hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt.encode("utf-8"), 260000)
-    return f"$pbkdf2-sha256${salt}${dk.hex()}"
-
-
-def _doc(d: dict) -> dict:
-    """Serialize ObjectId _id to string for JSON responses."""
-    if d and "_id" in d:
-        d["_id"] = str(d["_id"])
-    return d
-
-
-def _oid(individual_id: str) -> ObjectId:
-    """Parse a string to ObjectId, raising 400 on invalid format."""
-    try:
-        return ObjectId(individual_id)
-    except (InvalidId, Exception):
-        raise HTTPException(status_code=400, detail=f"Invalid id format: '{individual_id}'.")
+logger = get_logger("individuals")
 
 # ---------------------------------------------------------------------------
 # Standalone FastAPI app (each Lambda gets its own app + Mangum handler)
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="ACME Individuals Service",
-    version="1.0.0",
-)
-
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _raw_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = create_app("ACME Individuals Service")
 
 router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models
+# Pydantic models — aligned with docs/db/acme_schema.js
 # ---------------------------------------------------------------------------
 
-class IndividualBase(BaseModel):
-    """Fields shared between create and update payloads."""
+class IndividualCreate(BaseModel):
+    """Payload for creating a new individual (password set by admin)."""
 
-    first_name: str = Field(..., min_length=1)
-    last_name: str = Field(..., min_length=1)
+    person_name: str = Field(..., min_length=1)
     email: EmailStr
     job_title: Optional[str] = None
-    staff_type: str = Field(..., pattern="^(Contractor|Employee|Consultant)$")
-    location_id: Optional[str] = None
+    staff_type: str = Field(..., pattern="^(direct|non-direct)$")
+    primary_location: Optional[str] = None
+    roles: list[str] = Field(default_factory=list)
     profile_picture: Optional[str] = Field(
         default="avatars/defaults/default_01.png",
         description="S3 object key for the individual's profile picture.",
     )
-
-
-class IndividualCreate(IndividualBase):
-    """Payload for creating a new individual (password set by admin)."""
-
     password: str = Field(..., min_length=8)
 
 
 class IndividualUpdate(BaseModel):
     """All fields optional — PATCH semantics."""
 
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    person_name: Optional[str] = None
     email: Optional[EmailStr] = None
     job_title: Optional[str] = None
-    staff_type: Optional[str] = Field(default=None, pattern="^(Contractor|Employee|Consultant)$")
-    location_id: Optional[str] = None
+    staff_type: Optional[str] = Field(default=None, pattern="^(direct|non-direct)$")
+    primary_location: Optional[str] = None
+    roles: Optional[list[str]] = None
     profile_picture: Optional[str] = None
 
 
@@ -123,23 +82,23 @@ class IndividualUpdate(BaseModel):
 async def list_individuals(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
-    location_id: Optional[str] = None,
+    primary_location: Optional[str] = None,
     staff_type: Optional[str] = None,
     search: Optional[str] = None,
 ) -> list:
-    """Return all active individuals. All authenticated users may list (read-only)."""
-    query: dict = {"isActive": True}
-    if location_id:
-        query["locationId"] = location_id
+    """Return all active (non-deleted) individuals."""
+    query: dict = {"isDeleted": {"$ne": True}}
+    if primary_location:
+        query["primaryLocation"] = primary_location
     if staff_type:
         query["staffType"] = staff_type
     if search:
         query["$or"] = [
-            {"firstName": {"$regex": search, "$options": "i"}},
-            {"lastName": {"$regex": search, "$options": "i"}},
+            {"personName": {"$regex": search, "$options": "i"}},
             {"email": {"$regex": search, "$options": "i"}},
         ]
-    docs = await db["individuals"].find(query, {"passwordHash": 0}).to_list(200)
+    docs = await db["individuals"].find(query).to_list(200)
+    logger.info("Listed individuals", extra={"count": len(docs), "user_id": user.user_id, "filters": {k: v for k, v in {"primary_location": primary_location, "staff_type": staff_type, "search": search}.items() if v}})
     return [_doc(d) for d in docs]
 
 
@@ -156,12 +115,13 @@ async def get_individual(
             detail="Access denied: you may only view your own profile.",
         )
     doc = await db["individuals"].find_one(
-        {"_id": _oid(individual_id), "isActive": True}, {"passwordHash": 0}
+        {"_id": individual_id, "isDeleted": {"$ne": True}}
     )
     if not doc:
+        logger.warning("Individual not found", extra={"individual_id": individual_id, "user_id": user.user_id})
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Individual '{individual_id}' not found or inactive.",
+            detail=f"Individual '{individual_id}' not found.",
         )
     return _doc(doc)
 
@@ -178,21 +138,24 @@ async def create_individual(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Individual with email '{payload.email}' already exists.",
         )
+    now = datetime.now(timezone.utc).isoformat()
     doc = {
-        "firstName": payload.first_name,
-        "lastName": payload.last_name,
+        "personName": payload.person_name,
         "email": payload.email,
         "jobTitle": payload.job_title,
         "staffType": payload.staff_type,
-        "locationId": payload.location_id,
+        "primaryLocation": payload.primary_location,
+        "roles": payload.roles,
         "profilePicture": payload.profile_picture or "avatars/defaults/default_01.png",
-        "passwordHash": _hash_password(payload.password),
-        "isActive": True,
-        "createdAt": datetime.now(timezone.utc),
+        "auth": {"hashedPassword": _hash_password(payload.password)},
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": now,
+        "updatedAt": now,
     }
     result = await db["individuals"].insert_one(doc)
     doc["_id"] = result.inserted_id
-    doc.pop("passwordHash", None)
+    logger.info("Created individual", extra={"individual_id": str(result.inserted_id), "email": payload.email, "staff_type": payload.staff_type})
     return _doc(doc)
 
 
@@ -209,34 +172,32 @@ async def update_individual(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: you may only update your own profile.",
         )
-    oid = _oid(individual_id)
     updates = payload.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
-    # Validate profile_picture is an S3 key, not a full URL
     if "profile_picture" in updates and updates["profile_picture"].startswith("http"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="profile_picture must be an S3 object key, not a URL. Upload via presigned URL first.",
+            detail="profile_picture must be an S3 object key, not a URL.",
         )
     field_map = {
-        "first_name": "firstName",
-        "last_name": "lastName",
+        "person_name": "personName",
         "job_title": "jobTitle",
         "staff_type": "staffType",
-        "location_id": "locationId",
+        "primary_location": "primaryLocation",
         "profile_picture": "profilePicture",
     }
     set_dict = {field_map.get(k, k): v for k, v in updates.items()}
+    set_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
     result = await db["individuals"].update_one(
-        {"_id": oid, "isActive": True}, {"$set": set_dict}
+        {"_id": individual_id, "isDeleted": {"$ne": True}}, {"$set": set_dict}
     )
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Individual '{individual_id}' not found or inactive.",
+            detail=f"Individual '{individual_id}' not found or deleted.",
         )
-    doc = await db["individuals"].find_one({"_id": oid}, {"passwordHash": 0})
+    doc = await db["individuals"].find_one({"_id": individual_id})
     return _doc(doc)
 
 
@@ -246,24 +207,28 @@ async def deactivate_individual(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """Soft-delete an individual (R4 — no hard deletes). Blocks if active on a team."""
-    oid = _oid(individual_id)
     # R4: block if active on any team
     active_team = await db["teams"].find_one({
-        "status": {"$ne": "Closed"},
-        "members": {"$elemMatch": {"individualId": individual_id, "endDate": None}},
+        "isDeleted": {"$ne": True},
+        "members": {"$elemMatch": {"personId": individual_id, "endDate": None}},
     })
     if active_team:
+        logger.warning("R4 violation: individual on active team", extra={"individual_id": individual_id, "team_id": str(active_team.get("_id"))})
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"R4: individual '{individual_id}' is an active team member and cannot be deactivated.",
+            detail=f"R4: cannot deactivate individual '{individual_id}' — active on team '{active_team.get('_id')}'.",
         )
-    result = await db["individuals"].update_one({"_id": oid}, {"$set": {"isActive": False}})
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db["individuals"].update_one(
+        {"_id": individual_id, "isDeleted": {"$ne": True}},
+        {"$set": {"isDeleted": True, "deletedAt": now, "updatedAt": now}},
+    )
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Individual '{individual_id}' not found.",
         )
-    doc = await db["individuals"].find_one({"_id": oid}, {"passwordHash": 0})
+    doc = await db["individuals"].find_one({"_id": individual_id})
     return _doc(doc)
 
 

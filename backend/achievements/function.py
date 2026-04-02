@@ -10,8 +10,8 @@ Business rules enforced here:
     - No hard deletes — achievements are a permanent audit log.
 
 Environment variables:
-    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / DB_NAME - DocumentDB connection (injected by Terraform).
-    DB_NAME           - Database name (default: acme_team_mgmt).
+    MONGO_HOST / MONGO_PORT / MONGO_USER / MONGO_PASS / MONGO_NAME - DocumentDB connection (injected by Terraform).
+    MONGO_NAME           - Database name (default: acme_team_mgmt).
     JWT_SECRET        - Secret used to verify Bearer tokens.
     JWT_ALGORITHM     - JWT algorithm (default: HS256).
     ALLOWED_ORIGINS   - Comma-separated CORS origins.
@@ -31,6 +31,9 @@ from pydantic import BaseModel, Field
 
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
+from shared.logging import get_logger
+
+logger = get_logger("achievements")
 
 
 def _doc(d: dict) -> dict:
@@ -129,6 +132,7 @@ async def list_achievements(
             date_filter["$lte"] = to_date
         query["achievementDate"] = date_filter
     docs = await db["achievements"].find(query).sort("achievementDate", -1).to_list(200)
+    logger.info("Listed achievements", extra={"count": len(docs), "user_id": user.user_id, "filters": {k: v for k, v in {"team_id": team_id, "individual_id": individual_id}.items() if v}})
     return [_doc(d) for d in docs]
 
 
@@ -139,7 +143,7 @@ async def get_achievement(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Return a single achievement. Enforces visibility by role."""
-    doc = await db["achievements"].find_one({"_id": _oid(achievement_id)})
+    doc = await db["achievements"].find_one({"_id": achievement_id})
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -170,12 +174,12 @@ async def create_achievement(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not the active leader of this team.",
             )
-        team = await db["teams"].find_one({"_id": _oid(payload.team_id)})
+        team = await db["teams"].find_one({"_id": payload.team_id})
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{payload.team_id}' not found.")
     # Validate all awardedTo individuals exist and are active
     for ind_id in payload.awarded_to:
-        ind = await db["individuals"].find_one({"_id": _oid(ind_id), "isActive": True})
+        ind = await db["individuals"].find_one({"_id": ind_id, "isDeleted": {"$ne": True}})
         if not ind:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -192,6 +196,7 @@ async def create_achievement(
     }
     result = await db["achievements"].insert_one(doc)
     doc["_id"] = result.inserted_id
+    logger.info("Created achievement", extra={"achievement_id": str(result.inserted_id), "title": payload.title, "scope": "team" if payload.team_id else "org"})
     return _doc(doc)
 
 
@@ -203,7 +208,7 @@ async def update_achievement(
     user: CurrentUser = Depends(require_role("system_admin", "team_lead")),
 ) -> dict:
     """Update an achievement's metadata. awardedTo is intentionally not patchable."""
-    oid = _oid(achievement_id)
+    oid = achievement_id
     doc = await db["achievements"].find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Achievement '{achievement_id}' not found.")

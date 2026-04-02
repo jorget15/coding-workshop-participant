@@ -27,6 +27,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import ExpiredSignatureError, JWTError, jwt
 
+from shared.logging import get_logger
+
+logger = get_logger("auth")
+
 _bearer = HTTPBearer()
 
 VALID_ROLES = frozenset(
@@ -68,11 +72,13 @@ async def get_current_user(
     try:
         payload = jwt.decode(credentials.credentials, secret, algorithms=[algorithm])
     except ExpiredSignatureError:
+        logger.warning("Token expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired.",
         )
-    except JWTError:
+    except JWTError as exc:
+        logger.warning("Invalid token", extra={"error": str(exc)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or malformed token.",
@@ -80,11 +86,13 @@ async def get_current_user(
 
     role = payload.get("role", "")
     if role not in VALID_ROLES:
+        logger.warning("Unrecognised role in token", extra={"role": role})
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Unrecognised role '{role}' in token.",
         )
 
+    logger.info("Authenticated user", extra={"user_id": payload.get("sub"), "role": role})
     return CurrentUser(
         user_id=payload.get("sub", ""),
         username=payload.get("username", ""),
@@ -104,6 +112,10 @@ def require_role(*roles: str):
     """
     async def _check(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         if user.role not in roles:
+            logger.warning(
+                "Role check failed",
+                extra={"user_id": user.user_id, "user_role": user.role, "required": list(roles)},
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Required role(s): {', '.join(roles)}. Your role: {user.role}.",

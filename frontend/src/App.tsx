@@ -1,13 +1,24 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ToastContainer } from 'react-toastify'
-import 'react-toastify/dist/ReactToastify.css'
+import { useSelector } from 'react-redux'
+import { Toaster } from 'react-hot-toast'
 import AppLayout from './components/AppLayout'
 import DevRoleSwitcher from './components/DevRoleSwitcher'
 import ProtectedRoute from './components/ProtectedRoute'
 import AdminRoute from './components/AdminRoute'
+import type { RootState } from './store'
 
 // Auth
 import LoginPage from './pages/LoginPage'
+
+/** Redirects to the correct home page based on the user's role. */
+function RoleHome() {
+  const role = useSelector((s: RootState) => s.auth.role)
+  switch (role) {
+    case 'system_admin': return <Navigate to="/admin/dashboard" replace />
+    case 'team_lead':    return <Navigate to="/team/dashboard" replace />
+    default:             return <Navigate to="/team" replace />
+  }
+}
 
 // Admin pages
 import AdminDashboard     from './pages/admin/AdminDashboard'
@@ -68,10 +79,10 @@ function AuthenticatedApp() {
         <Route path="/profile"        element={<ProtectedRoute><MyProfile /></ProtectedRoute>} />
 
         {/* Root → role-appropriate home */}
-        <Route path="/" element={<Navigate to="/team" replace />} />
+        <Route path="/" element={<RoleHome />} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to="/team" replace />} />
+        <Route path="*" element={<RoleHome />} />
       </Routes>
     </AppLayout>
   )
@@ -84,7 +95,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/*"     element={<ProtectedRoute><AuthenticatedApp /></ProtectedRoute>} />
       </Routes>
-      <ToastContainer position="top-right" theme="light" autoClose={3000} />
+      <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
       <DevRoleSwitcher />
     </BrowserRouter>
   )
