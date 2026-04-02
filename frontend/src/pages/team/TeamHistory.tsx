@@ -1,17 +1,17 @@
 import { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from '../../store'
-import { fetchTeamsAsync } from '../../store/teamSlice'
+import { fetchTeamHistoryAsync } from '../../store/teamSlice'
+import { formatDateTime } from '../../utils/formatDate'
 
 export default function TeamHistory() {
   const dispatch = useDispatch<AppDispatch>()
-  const { teams, loading } = useSelector((s: RootState) => s.teams)
+  const { teamHistory, loading } = useSelector((s: RootState) => s.teams)
   const { teamId } = useSelector((s: RootState) => s.auth)
 
-  useEffect(() => { dispatch(fetchTeamsAsync()) }, [dispatch])
+  useEffect(() => { if (teamId) dispatch(fetchTeamHistoryAsync(teamId)) }, [dispatch, teamId])
 
-  const team = teams.find(t => t._id === teamId)
-  const history = team?.teamHistory ?? []
+  const history = (teamId ? teamHistory[teamId] : undefined) ?? []
 
   return (
     <div className="flex flex-col gap-5 max-w-3xl">
@@ -28,7 +28,7 @@ export default function TeamHistory() {
               <span className="absolute -left-9 top-1 w-4 h-4 rounded-full bg-acme-action border-2 border-acme-card" />
               <p className="text-acme-heading font-semibold text-sm">{e.eventType}</p>
               <p className="text-acme-text text-sm">{e.description}</p>
-              <p className="text-acme-muted text-xs mt-0.5">{e.occurredAt?.slice(0,10)}</p>
+              <p className="text-acme-muted text-xs mt-0.5">{formatDateTime(e.changedAt)}</p>
             </li>
           ))}
         </ol>

@@ -27,8 +27,8 @@ EXISTING_LOCATION = {
     "name": "NYC HQ",
     "city": "New York",
     "country": "USA",
-    "region": "Northeast",
-    "isActive": True,
+    "region": "NAM",
+    "isDeleted": False,
 }
 
 VALID_PAYLOAD = {
@@ -71,7 +71,7 @@ class TestEnums:
 
     async def test_user_roles_match_schema(self, client: AsyncClient) -> None:
         resp = await client.get("/metadata/enums")
-        assert set(resp.json()["user_roles"]) == {"system_admin", "team_lead", "editor", "viewer"}
+        assert set(resp.json()["user_roles"]) == {"system_admin", "team_lead", "viewer"}
 
 
 # ---------------------------------------------------------------------------

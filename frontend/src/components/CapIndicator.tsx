@@ -1,5 +1,5 @@
 interface Props {
-  active:  number  // current active Member count (exclude Leader)
+  active:  number  // total active member count (all roles, including Leader)
   max?:    number  // cap, defaults to 5
 }
 

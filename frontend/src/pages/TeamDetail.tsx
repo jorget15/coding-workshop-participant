@@ -38,9 +38,9 @@ export default function TeamDetail() {
 
       <h2 className="text-lg font-semibold text-acme-heading mb-3">
         Active Members
-        {/* R1: count only Members toward cap */}
+        {/* R1: all active members (including leader) count toward cap */}
         <span className="ml-2 text-sm font-normal text-acme-muted">
-          ({activeMembers.filter((m) => m.memberRole === 'Member').length}/5 members)
+          ({activeMembers.length}/5 members)
         </span>
       </h2>
 

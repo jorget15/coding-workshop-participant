@@ -58,3 +58,49 @@ def create_app(title: str) -> FastAPI:
         allow_headers=["*"],
     )
     return app
+
+
+def make_history_entry(
+    event_type: str,
+    description: str,
+    changed_by: str,
+    previous_state: dict | None = None,
+    new_state: dict | None = None,
+) -> dict:
+    """Build a teamHistory document (for the separate teamHistory collection).
+
+    Matches the schema: teamId, eventType, changedBy, changedAt, description,
+    previousState, newState.  The caller must add `teamId` and `_id` before inserting.
+    """
+    from datetime import datetime, timezone
+
+    return {
+        "eventType": event_type,
+        "changedBy": changed_by,
+        "changedAt": datetime.now(timezone.utc).isoformat(),
+        "description": description,
+        "previousState": previous_state,
+        "newState": new_state,
+    }
+
+
+def make_change_entry(
+    event_type: str,
+    description: str,
+    metadata: dict | None = None,
+) -> dict:
+    """Build a changeHistory entry for the individuals embedded array.
+
+    Event types: PROFILE_CREATED, JOINED_TEAM,
+    LEFT_TEAM, DEACTIVATED, ROLE_CHANGED.
+    """
+    from datetime import datetime, timezone
+
+    entry = {
+        "eventType": event_type,
+        "description": description,
+        "occurredAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if metadata:
+        entry["metadata"] = metadata
+    return entry

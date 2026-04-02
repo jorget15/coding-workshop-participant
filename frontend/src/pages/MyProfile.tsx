@@ -1,27 +1,39 @@
-import { useSelector } from 'react-redux'
-import type { RootState } from '../store'
+import { useEffect } from 'react'
+import { useSelector, useDispatch } from 'react-redux'
+import { formatDateTime } from '../utils/formatDate'
+import type { RootState, AppDispatch } from '../store'
+import { fetchIndividualHistoryAsync, fetchIndividualsAsync } from '../store/teamSlice'
+import Avatar from '../components/Avatar'
 
 export default function MyProfile() {
+  const dispatch = useDispatch<AppDispatch>()
   const user = useSelector((s: RootState) => s.auth)
+  const { individuals, individualHistory } = useSelector((s: RootState) => s.teams)
+
+  useEffect(() => {
+    dispatch(fetchIndividualsAsync())
+    if (user.userId) dispatch(fetchIndividualHistoryAsync(user.userId))
+  }, [dispatch, user.userId])
+
+  const me = individuals.find(i => i._id === user.userId)
 
   const roleBadge: Record<string, string> = {
     system_admin: 'bg-purple-600 text-white',
     team_lead:    'bg-blue-600 text-white',
-    editor:       'bg-green-600 text-white',
     viewer:       'bg-gray-500 text-white',
   }
 
-  const avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.username ?? 'User')}&background=1e3a5f&color=fff&size=128`
   const roleBadgeColor = user.role ? (roleBadge[user.role] ?? 'bg-gray-400 text-white') : 'bg-gray-400 text-white'
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
       {/* Avatar + name */}
       <div className="flex items-center gap-6">
-        <img
-          src={avatar}
-          alt={user.username ?? 'User'}
-          className="w-24 h-24 rounded-full ring-4 ring-acme-accent"
+        <Avatar
+          name={user.username ?? 'User'}
+          src={me?.profilePicture}
+          size="xl"
+          className="ring-4 ring-acme-accent"
         />
         <div>
           <h1 className="text-2xl font-bold text-acme-heading">{user.username}</h1>
@@ -56,6 +68,27 @@ export default function MyProfile() {
           </div>
         </dl>
       </div>
+
+      {/* Change History */}
+      {user.userId && (
+        <div className="rounded-xl border border-acme-border bg-acme-surface p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-acme-heading">My History</h2>
+          {(individualHistory[user.userId] ?? []).length === 0 ? (
+            <p className="text-acme-muted text-sm">No change history recorded.</p>
+          ) : (
+            <ol className="relative border-l border-acme-border pl-6 flex flex-col gap-3">
+              {[...(individualHistory[user.userId] ?? [])].reverse().map((e, i) => (
+                <li key={i} className="relative">
+                  <span className="absolute -left-9 top-1 w-3 h-3 rounded-full bg-acme-action border-2 border-acme-card" />
+                  <p className="text-acme-heading font-semibold text-sm">{e.eventType}</p>
+                  <p className="text-acme-text text-sm">{e.description}</p>
+                  <p className="text-acme-muted text-xs mt-0.5">{formatDateTime(e.occurredAt)}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
     </div>
   )
 }

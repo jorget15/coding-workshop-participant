@@ -27,7 +27,7 @@ from mangum import Mangum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, EmailStr, Field
 
-from shared import create_app, serialize_doc, hash_password, oid
+from shared import create_app, serialize_doc, hash_password, oid, make_change_entry
 from shared.auth import CurrentUser, get_current_user, require_role
 from shared.db import get_db
 from shared.logging import get_logger
@@ -46,6 +46,13 @@ router = APIRouter()
 # Pydantic models — aligned with docs/db/acme_schema.js
 # ---------------------------------------------------------------------------
 
+class HomeLocation(BaseModel):
+    """Freeform location where the individual lives/works from."""
+    city: str = Field(..., min_length=1)
+    country: str = Field(..., min_length=1)
+    region: str = Field(..., pattern="^(NAM|LATAM|EMEA|APAC)$")
+
+
 class IndividualCreate(BaseModel):
     """Payload for creating a new individual (password set by admin)."""
 
@@ -53,7 +60,8 @@ class IndividualCreate(BaseModel):
     email: EmailStr
     job_title: Optional[str] = None
     staff_type: str = Field(..., pattern="^(direct|non-direct)$")
-    primary_location: Optional[str] = None
+    home_location: HomeLocation
+    assigned_office: Optional[str] = None
     roles: list[str] = Field(default_factory=list)
     profile_picture: Optional[str] = Field(
         default="avatars/defaults/default_01.png",
@@ -69,7 +77,8 @@ class IndividualUpdate(BaseModel):
     email: Optional[EmailStr] = None
     job_title: Optional[str] = None
     staff_type: Optional[str] = Field(default=None, pattern="^(direct|non-direct)$")
-    primary_location: Optional[str] = None
+    home_location: Optional[HomeLocation] = None
+    assigned_office: Optional[str] = None
     roles: Optional[list[str]] = None
     profile_picture: Optional[str] = None
 
@@ -89,7 +98,7 @@ async def list_individuals(
     """Return all active (non-deleted) individuals."""
     query: dict = {"isDeleted": {"$ne": True}}
     if primary_location:
-        query["primaryLocation"] = primary_location
+        query["homeLocation.region"] = primary_location
     if staff_type:
         query["staffType"] = staff_type
     if search:
@@ -144,12 +153,17 @@ async def create_individual(
         "email": payload.email,
         "jobTitle": payload.job_title,
         "staffType": payload.staff_type,
-        "primaryLocation": payload.primary_location,
+        "homeLocation": payload.home_location.model_dump(),
+        "assignedOffice": payload.assigned_office,
         "roles": payload.roles,
         "profilePicture": payload.profile_picture or "avatars/defaults/default_01.png",
         "auth": {"hashedPassword": hash_password(payload.password)},
         "isDeleted": False,
         "deletedAt": None,
+        "changeHistory": [make_change_entry(
+            event_type="PROFILE_CREATED",
+            description=f"Profile created for {payload.person_name}.",
+        )],
         "createdAt": now,
         "updatedAt": now,
     }
@@ -180,11 +194,18 @@ async def update_individual(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="profile_picture must be an S3 object key, not a URL.",
         )
+    # Convert home_location sub-object into dot-notation updates
+    if "home_location" in updates:
+        hl = updates.pop("home_location")
+        if isinstance(hl, HomeLocation):
+            hl = hl.model_dump()
+        for k, v in hl.items():
+            updates[f"homeLocation.{k}"] = v
     field_map = {
         "person_name": "personName",
         "job_title": "jobTitle",
         "staff_type": "staffType",
-        "primary_location": "primaryLocation",
+        "assigned_office": "assignedOffice",
         "profile_picture": "profilePicture",
     }
     set_dict = {field_map.get(k, k): v for k, v in updates.items()}
@@ -197,6 +218,7 @@ async def update_individual(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Individual '{individual_id}' not found or deleted.",
         )
+
     doc = await db["individuals"].find_one({"_id": individual_id})
     return serialize_doc(doc)
 
@@ -228,6 +250,17 @@ async def deactivate_individual(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Individual '{individual_id}' not found.",
         )
+
+    # Append DEACTIVATED to changeHistory
+    change = make_change_entry(
+        event_type="DEACTIVATED",
+        description="Profile deactivated (soft-delete).",
+    )
+    await db["individuals"].update_one(
+        {"_id": individual_id},
+        {"$push": {"changeHistory": change}},
+    )
+
     doc = await db["individuals"].find_one({"_id": individual_id})
     return serialize_doc(doc)
 
@@ -254,6 +287,31 @@ async def get_avatar_upload_url(
         ExpiresIn=300,
     )
     return {"upload_url": upload_url, "s3_key": s3_key}
+
+
+@router.get("/{individual_id}/history")
+async def get_individual_history(
+    individual_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list:
+    """Return the changeHistory array for an individual."""
+    if user.role not in ("system_admin", "team_lead") and user.user_id != individual_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you may only view your own history.",
+        )
+    doc = await db["individuals"].find_one(
+        {"_id": individual_id}, {"changeHistory": 1}
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Individual '{individual_id}' not found.",
+        )
+    history = doc.get("changeHistory", [])
+    history.reverse()  # newest first
+    return history
 
 
 # ---------------------------------------------------------------------------

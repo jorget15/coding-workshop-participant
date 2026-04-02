@@ -13,7 +13,7 @@ Token payload structure (set at login)::
     {
         "sub":       "<individual _id as string>",
         "username":  "<display name>",
-        "role":      "system_admin" | "team_lead" | "editor" | "viewer" | "non-direct",
+        "role":      "system_admin" | "team_lead" | "viewer",
         "team_id":   "<team _id or null>",
         "exp":       <unix timestamp>
     }
@@ -34,7 +34,7 @@ logger = get_logger("auth")
 _bearer = HTTPBearer()
 
 VALID_ROLES = frozenset(
-    {"system_admin", "team_lead", "editor", "viewer", "non-direct"}
+    {"system_admin", "team_lead", "viewer"}
 )
 
 

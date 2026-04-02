@@ -48,28 +48,29 @@ router = APIRouter()
 class AchievementCreate(BaseModel):
     """Payload for recording a new achievement."""
 
-    title: str = Field(..., min_length=1)
-    description: Optional[str] = None
+    achievement_title: str = Field(..., min_length=1)
+    achievement_description: Optional[str] = None
     team_id: Optional[str] = Field(
         default=None,
         description="Leave null for org-wide / bounty-style achievements.",
     )
-    awarded_to: list[str] = Field(
+    contributors: list[str] = Field(
         default_factory=list,
-        description="List of individual _id values receiving this achievement. Empty for org-wide achievements.",
+        description="List of individual _id values. Empty for org-wide achievements.",
     )
-    achievement_date: Optional[str] = Field(
+    achievement_month: Optional[str] = Field(
         default=None,
-        description="ISO 8601 date string. Defaults to today if omitted.",
+        pattern=r"^\d{4}-\d{2}$",
+        description="YYYY-MM format. Defaults to current month if omitted.",
     )
 
 
 class AchievementUpdate(BaseModel):
     """All fields optional — PATCH semantics."""
 
-    title: Optional[str] = None
-    description: Optional[str] = None
-    achievement_date: Optional[str] = None
+    achievement_title: Optional[str] = None
+    achievement_description: Optional[str] = None
+    achievement_month: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ async def list_achievements(
     query: dict = {}
     if user.role == "team_lead":
         query["teamId"] = user.team_id
-    elif user.role not in ("system_admin", "editor", "viewer"):
+    elif user.role not in ("system_admin", "viewer", "team_lead"):
         # members only see their own
         query["awardedTo"] = {"$in": [user.user_id]}
     if team_id:
@@ -122,7 +123,7 @@ async def get_achievement(
             detail=f"Achievement '{achievement_id}' not found.",
         )
     # Visibility check — viewers/editors can see all achievements
-    is_open = user.role in ("system_admin", "viewer", "editor")
+    is_open = user.role in ("system_admin", "viewer", "team_lead")
     is_lead_of_team = user.role == "team_lead" and user.team_id == doc.get("teamId")
     is_recipient = user.user_id in (doc.get("awardedTo") or [])
     if not (is_open or is_lead_of_team or is_recipient):
@@ -149,26 +150,29 @@ async def create_achievement(
         team = await db["teams"].find_one({"_id": payload.team_id})
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{payload.team_id}' not found.")
-    # Validate all awardedTo individuals exist and are active
-    for ind_id in payload.awarded_to:
+    # Validate all contributors exist and are active
+    for ind_id in payload.contributors:
         ind = await db["individuals"].find_one({"_id": ind_id, "isDeleted": {"$ne": True}})
         if not ind:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Individual '{ind_id}' not found or inactive.",
             )
+    month = payload.achievement_month or datetime.now(timezone.utc).strftime("%Y-%m")
     doc = {
-        "title": payload.title,
-        "description": payload.description,
+        "achievementTitle": payload.achievement_title,
+        "achievementDescription": payload.achievement_description,
         "teamId": payload.team_id,
-        "awardedTo": payload.awarded_to,
-        "achievementDate": payload.achievement_date or datetime.now(timezone.utc).date().isoformat(),
-        "createdAt": datetime.now(timezone.utc),
+        "contributors": payload.contributors,
+        "achievementMonth": month,
+        "isDeleted": False,
+        "deletedAt": None,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
         "createdBy": user.user_id,
     }
     result = await db["achievements"].insert_one(doc)
     doc["_id"] = result.inserted_id
-    logger.info("Created achievement", extra={"achievement_id": str(result.inserted_id), "title": payload.title, "scope": "team" if payload.team_id else "org"})
+    logger.info("Created achievement", extra={"achievement_id": str(result.inserted_id), "title": payload.achievement_title, "scope": "team" if payload.team_id else "org"})
     return serialize_doc(doc)
 
 
@@ -192,7 +196,7 @@ async def update_achievement(
     updates = payload.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update.")
-    field_map = {"achievement_date": "achievementDate"}
+    field_map = {"achievement_title": "achievementTitle", "achievement_description": "achievementDescription", "achievement_month": "achievementMonth"}
     set_dict = {field_map.get(k, k): v for k, v in updates.items()}
     await db["achievements"].update_one({"_id": oid}, {"$set": set_dict})
     doc = await db["achievements"].find_one({"_id": oid})

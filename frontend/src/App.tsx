@@ -29,6 +29,8 @@ import AdminIndividualProfile from './pages/admin/AdminIndividualProfile'
 import AdminAchievementFeed   from './pages/admin/AdminAchievementFeed'
 import AdminLocationList  from './pages/admin/AdminLocationList'
 import AdminReports       from './pages/admin/AdminReports'
+import AdminReportBuilder    from './pages/admin/AdminReportBuilder'
+import AdminMetricsDashboard from './pages/admin/AdminMetricsDashboard'
 
 // Team lead pages
 import TeamLeadDashboard  from './pages/team/TeamLeadDashboard'
@@ -59,6 +61,8 @@ function AuthenticatedApp() {
         <Route path="/admin/achievements"       element={<AdminRoute><AdminAchievementFeed /></AdminRoute>} />
         <Route path="/admin/locations"          element={<AdminRoute><AdminLocationList /></AdminRoute>} />
         <Route path="/admin/reports"            element={<AdminRoute><AdminReports /></AdminRoute>} />
+        <Route path="/admin/report-builder"    element={<AdminRoute><AdminReportBuilder /></AdminRoute>} />
+        <Route path="/admin/metrics"           element={<AdminRoute><AdminMetricsDashboard /></AdminRoute>} />
 
         {/* Team lead */}
         <Route path="/team/dashboard" element={<ProtectedRoute roles={['system_admin','team_lead']}><TeamLeadDashboard /></ProtectedRoute>} />
@@ -67,7 +71,7 @@ function AuthenticatedApp() {
         <Route path="/team/history"   element={<ProtectedRoute roles={['system_admin','team_lead']}><TeamHistory /></ProtectedRoute>} />
 
         {/* Direct staff */}
-        <Route path="/team/people"    element={<ProtectedRoute roles={['system_admin','team_lead','editor','viewer']}><MyTeammates /></ProtectedRoute>} />
+        <Route path="/team/people"    element={<ProtectedRoute roles={['system_admin','team_lead','viewer']}><MyTeammates /></ProtectedRoute>} />
         <Route path="/team"           element={<ProtectedRoute><MyTeam /></ProtectedRoute>} />
 
         {/* Team browsing */}

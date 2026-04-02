@@ -13,13 +13,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from auth.function import app
-from shared import hash_password, verify_password
+from shared import hash_password
 from tests.conftest import override_deps
 
 pytestmark = pytest.mark.asyncio
 
-USER_ID = "ind_alice_001"
-EMAIL = "alice@acme.com"
+USER_ID = "ind_jorge_001"
+EMAIL = "jorge@acme.com"
 PASSWORD = "Admin1234!"
 HASHED = hash_password(PASSWORD)
 
@@ -41,29 +41,8 @@ async def client() -> AsyncClient:
 
 
 # ---------------------------------------------------------------------------
-# Password hashing helpers
+# Password hashing helpers are tested in test_shared.py
 # ---------------------------------------------------------------------------
-class TestPasswordHashing:
-
-    def test_hash_produces_valid_format(self) -> None:
-        h = hash_password("test123")
-        parts = h.split("$")
-        assert len(parts) == 4
-        assert parts[1] == "pbkdf2-sha256"
-
-    def test_verify_correct_password(self) -> None:
-        h = hash_password("correct-password")
-        assert verify_password("correct-password", h) is True
-
-    def test_verify_wrong_password(self) -> None:
-        h = hash_password("correct-password")
-        assert verify_password("wrong-password", h) is False
-
-    def test_verify_malformed_hash(self) -> None:
-        assert verify_password("anything", "not-a-valid-hash") is False
-
-    def test_verify_empty_hash(self) -> None:
-        assert verify_password("anything", "") is False
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +154,7 @@ class TestRefresh:
     async def test_valid_token_returns_new_token(self, client: AsyncClient) -> None:
         """A valid, non-expired token should return a fresh one."""
         from auth.function import _sign_token
-        token = _sign_token({"sub": USER_ID, "username": "Alice", "role": "system_admin", "team_id": None})
+        token = _sign_token({"sub": USER_ID, "username": "jorge", "role": "system_admin", "team_id": None})
 
         mock_db = MagicMock()
         mock_col = MagicMock()

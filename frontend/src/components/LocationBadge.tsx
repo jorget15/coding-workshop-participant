@@ -8,7 +8,7 @@ interface Props {
 const regionColor: Record<Region, string> = {
   NAM:   'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
   LATAM: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
-  EU:    'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+  EU:    'bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-200 dark:ring-1 dark:ring-purple-500/40',
   APAC:  'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
 }
 

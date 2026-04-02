@@ -28,9 +28,8 @@ export default function ManageMembers() {
   const team = teams.find(t => t._id === teamId)
   if (!team) return <p className="text-acme-muted p-4">{loading ? 'Loading…' : 'No team found.'}</p>
 
-  const allActive     = team.members.filter(m => m.endDate === null)
-  const activeMembers = allActive.filter(m => m.memberRole === 'Member')
-  const atCap         = activeMembers.length >= 5
+  const allActive = team.members.filter(m => m.endDate === null)
+  const atCap     = allActive.length >= 5
 
   const currentMemberIds = new Set(allActive.map(m => m.personId))
   const available = individuals.filter(i => !i.isDeleted && !currentMemberIds.has(i._id))
@@ -73,9 +72,9 @@ export default function ManageMembers() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <CapIndicator active={activeMembers.length} />
+        <CapIndicator active={allActive.length} />
         {atCap && <p className="text-acme-red text-sm font-medium">This team already has 5 active members.</p>}
-        {activeMembers.length === 4 && !atCap && <p className="text-acme-amber text-sm">1 slot remaining.</p>}
+        {allActive.length === 4 && !atCap && <p className="text-acme-amber text-sm">1 slot remaining.</p>}
       </div>
 
       <div className="bg-acme-card border border-acme-border rounded-xl overflow-hidden">

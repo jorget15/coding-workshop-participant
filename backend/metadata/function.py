@@ -172,7 +172,7 @@ async def get_enums() -> dict:
     return {
         "staff_types": ["direct", "non-direct"],
         "member_roles": ["Team Leader", "Member", "Delegate"],
-        "user_roles": ["system_admin", "team_lead", "editor", "viewer"],
+        "user_roles": ["system_admin", "team_lead", "viewer"],
         "regions": ["NAM", "LATAM", "EMEA", "APAC"],
     }
 

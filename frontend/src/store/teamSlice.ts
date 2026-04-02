@@ -1,7 +1,7 @@
 /* teamSlice — manages teams, individuals, locations from the acme_team_mgmt DB.
  *
  * Schema facts reflected here (from docs/db/acme_schema.js):
- *   - Teams have max 5 active Members (R1); Leader & Delegate excluded from cap.
+ *   - Teams have max 5 active members total (R1); Team Leader counts toward cap.
  *   - Exactly 1 active Team Leader per team (R2).
  *   - An individual can be in multiple teams (R3).
  *   - Locations are controlled refs (R4).
@@ -12,7 +12,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import api, { apiError } from '../api'
 
-export type Region = 'NAM' | 'LATAM' | 'EU' | 'APAC'
+export type Region = 'NAM' | 'LATAM' | 'EMEA' | 'APAC'
 export type StaffType = 'direct' | 'non-direct'
 export type MemberRole = 'Team Leader' | 'Member' | 'Delegate'
 
@@ -25,16 +25,42 @@ export interface Location {
   timezone: string
 }
 
+export interface HomeLocation {
+  city: string
+  country: string
+  region: string
+}
+
+export interface ChangeEntry {
+  eventType: string
+  description: string
+  occurredAt: string
+  metadata?: Record<string, string>
+}
+
+export interface TeamHistoryEntry {
+  _id: string
+  teamId: string
+  eventType: string
+  changedBy: string
+  changedAt: string
+  description: string
+  previousState?: Record<string, unknown>
+  newState?: Record<string, unknown>
+}
+
 export interface Individual {
   _id: string
   personName: string
   email: string
-  primaryLocation: string
+  homeLocation: HomeLocation
+  assignedOffice?: string
   staffType: StaffType
   roles: string[]
   jobTitle: string
   profilePicture?: string
   isDeleted: boolean
+  changeHistory?: ChangeEntry[]
   createdAt: string
   updatedAt: string
 }
@@ -52,10 +78,10 @@ export interface Team {
   _id: string
   teamName: string
   description: string
-  primaryLocation: string
+  teamHomeLocation: string
   members: TeamMember[]
   reportingHistory: { orgLeaderId: string; orgLeaderName: string; startDate: string; endDate: string | null }[]
-  teamHistory: { eventType: string; description: string; occurredAt: string }[]
+  teamHistory?: { eventType: string; description: string; occurredAt: string; changedAt?: string }[]
   isDeleted: boolean
   createdAt: string
   updatedAt: string
@@ -64,23 +90,24 @@ export interface Team {
 export interface Achievement {
   _id: string
   teamId: string | null        // null = org-level / bounty
-  title: string
-  description: string
+  achievementTitle: string
+  achievementDescription: string
   achievementMonth: string     // YYYY-MM
   impactMetric: string
   tags: string[]
-  contributors: { personId: string; personName: string }[]
+  contributors: string[]       // individual _id references
   proofLink?: string
   createdBy: string
+  isDeleted: boolean
   createdAt: string
 }
 
 export interface AchievementInput {
   team_id: string | null
-  title: string
-  description: string
-  achievement_date: string
-  awarded_to: string[]
+  achievement_title: string
+  achievement_description: string
+  achievement_month: string
+  contributors: string[]
 }
 
 interface TeamState {
@@ -88,6 +115,8 @@ interface TeamState {
   individuals:  Individual[]
   locations:    Location[]
   achievements: Achievement[]
+  teamHistory:  Record<string, TeamHistoryEntry[]>
+  individualHistory: Record<string, ChangeEntry[]>
   loading:      boolean
   error:        string | null
 }
@@ -97,6 +126,8 @@ const initialState: TeamState = {
   individuals:  [],
   locations:    [],
   achievements: [],
+  teamHistory:  {},
+  individualHistory: {},
   loading:      false,
   error:        null,
 }
@@ -189,16 +220,25 @@ export const removeMemberAsync = createAsyncThunk(
 
 export const createIndividualAsync = createAsyncThunk(
   'teams/createIndividual',
-  async (payload: { person_name: string; email: string; primary_location: string; staff_type: StaffType; job_title: string; password: string }, { rejectWithValue }) => {
-    try { return (await api.post('/individuals', payload)).data as Individual }
+  async (payload: { person_name: string; email: string; home_city: string; home_country: string; home_region: string; assigned_office?: string; staff_type: StaffType; job_title: string; password: string }, { rejectWithValue }) => {
+    const { home_city, home_country, home_region, assigned_office, ...rest } = payload
+    const body = { ...rest, home_location: { city: home_city, country: home_country, region: home_region }, assigned_office: assigned_office || undefined }
+    try { return (await api.post('/individuals', body)).data as Individual }
     catch (err) { return rejectWithValue(apiError(err, 'Failed to create individual')) }
   }
 )
 
 export const updateIndividualAsync = createAsyncThunk(
   'teams/updateIndividual',
-  async ({ id, ...payload }: { id: string; person_name?: string; email?: string; primary_location?: string; staff_type?: StaffType; job_title?: string }, { rejectWithValue }) => {
-    try { return (await api.patch(`/individuals/${id}`, payload)).data as Individual }
+  async ({ id, home_city, home_country, home_region, ...rest }: {
+    id: string; person_name?: string; email?: string; staff_type?: StaffType; job_title?: string;
+    home_city?: string; home_country?: string; home_region?: string; assigned_office?: string
+  }, { rejectWithValue }) => {
+    const body: Record<string, unknown> = { ...rest }
+    if (home_city || home_country || home_region) {
+      body.home_location = { city: home_city, country: home_country, region: home_region }
+    }
+    try { return (await api.patch(`/individuals/${id}`, body)).data as Individual }
     catch (err) { return rejectWithValue(apiError(err, 'Failed to update individual')) }
   }
 )
@@ -226,6 +266,24 @@ export const updateLocationAsync = createAsyncThunk(
   async ({ id, ...payload }: { id: string; name?: string; city?: string; country?: string; region?: Region; timezone?: string }, { rejectWithValue }) => {
     try { return (await api.patch(`/metadata/locations/${id}`, payload)).data as Location }
     catch (err) { return rejectWithValue(apiError(err, 'Failed to update location')) }
+  }
+)
+
+/* ── History ── */
+
+export const fetchTeamHistoryAsync = createAsyncThunk(
+  'teams/fetchTeamHistory',
+  async (teamId: string, { rejectWithValue }) => {
+    try { return { teamId, history: (await api.get(`/teams/${teamId}/history`)).data as TeamHistoryEntry[] } }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch team history')) }
+  }
+)
+
+export const fetchIndividualHistoryAsync = createAsyncThunk(
+  'teams/fetchIndividualHistory',
+  async (individualId: string, { rejectWithValue }) => {
+    try { return { individualId, history: (await api.get(`/individuals/${individualId}/history`)).data as ChangeEntry[] } }
+    catch (err) { return rejectWithValue(apiError(err, 'Failed to fetch individual history')) }
   }
 )
 
@@ -262,6 +320,9 @@ const teamSlice = createSlice({
       // Location CRUD
       .addCase(createLocationAsync.fulfilled, (state, action) => { state.locations.push(action.payload) })
       .addCase(updateLocationAsync.fulfilled, (state, action) => { const i = state.locations.findIndex(l => l._id === action.payload._id); if (i >= 0) state.locations[i] = action.payload })
+      // History
+      .addCase(fetchTeamHistoryAsync.fulfilled, (state, action) => { state.teamHistory[action.payload.teamId] = action.payload.history })
+      .addCase(fetchIndividualHistoryAsync.fulfilled, (state, action) => { state.individualHistory[action.payload.individualId] = action.payload.history })
   },
 })
 

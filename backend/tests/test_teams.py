@@ -11,7 +11,7 @@ Coverage:
     - DELETE /teams/{id}/members/{pid}   — remove member (admin, viewer 403, 404)
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -36,8 +36,8 @@ FULL_TEAM = {
     "teamName": "Full Team",
     "isDeleted": False,
     "members": [
-        {"personId": f"id_{i}", "memberRole": "Member", "endDate": None}
-        for i in range(5)
+        {"personId": "leader_id", "memberRole": "Team Leader", "endDate": None},
+        *[{"personId": f"id_{i}", "memberRole": "Member", "endDate": None} for i in range(4)],
     ],
 }
 
@@ -74,11 +74,12 @@ class TestListTeams:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    async def test_team_lead_sees_own_team_only(self, client: AsyncClient) -> None:
-        """team_lead queries should be scoped to their team_id."""
+    async def test_team_lead_sees_all_teams(self, client: AsyncClient) -> None:
+        """team_lead can browse all teams (read-only)."""
         with override_deps(app, role="team_lead", team_id=TEAM_ID):
             resp = await client.get("/teams")
         assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
     async def test_filter_by_search(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin"):
@@ -315,3 +316,133 @@ class TestRemoveMember:
             resp = await client.delete(f"/teams/{TEAM_ID}/members/{PERSON_ID}")
         assert resp.status_code == 404
         assert PERSON_ID in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Team History
+# ---------------------------------------------------------------------------
+
+
+class TestGetTeamHistory:
+
+    async def test_returns_history_list(self, client: AsyncClient) -> None:
+        history_docs = [
+            {"_id": "hist_1", "teamId": TEAM_ID, "eventType": "team_created", "changedAt": "2026-01-01T00:00:00"},
+            {"_id": "hist_2", "teamId": TEAM_ID, "eventType": "member_added", "changedAt": "2026-01-02T00:00:00"},
+        ]
+        with override_deps(app, role="system_admin") as (_, col, _):
+            cursor = MagicMock()
+            cursor.sort = MagicMock(return_value=cursor)
+            cursor.to_list = AsyncMock(return_value=history_docs)
+            col.find = MagicMock(return_value=cursor)
+            resp = await client.get(f"/teams/{TEAM_ID}/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["eventType"] == "team_created"
+        assert data[1]["eventType"] == "member_added"
+
+    async def test_returns_empty_for_no_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            cursor = MagicMock()
+            cursor.sort = MagicMock(return_value=cursor)
+            cursor.to_list = AsyncMock(return_value=[])
+            col.find = MagicMock(return_value=cursor)
+            resp = await client.get(f"/teams/{TEAM_ID}/history")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_viewer_can_read_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer") as (_, col, _):
+            cursor = MagicMock()
+            cursor.sort = MagicMock(return_value=cursor)
+            cursor.to_list = AsyncMock(return_value=[])
+            col.find = MagicMock(return_value=cursor)
+            resp = await client.get(f"/teams/{TEAM_ID}/history")
+        assert resp.status_code == 200
+
+
+class TestCreateTeamWritesHistory:
+
+    async def test_create_team_appends_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            resp = await client.post("/teams", json={"team_name": "New Team", "location_id": "loc_nyc_hq"})
+        assert resp.status_code == 201
+        # insert_one is called twice: once for the team, once for teamHistory
+        assert col.insert_one.await_count == 2
+        history_call = col.insert_one.await_args_list[1]
+        history_doc = history_call[0][0]
+        assert history_doc["eventType"] == "team_created"
+        assert "teamId" in history_doc
+        assert history_doc["description"] == "New Team created."
+
+
+class TestUpdateTeamWritesHistory:
+
+    async def test_update_team_appends_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=ACTIVE_TEAM)
+            resp = await client.patch(f"/teams/{TEAM_ID}", json={"team_name": "Renamed Squad"})
+        assert resp.status_code == 200
+        # insert_one: 1 call for teamHistory
+        assert col.insert_one.await_count == 1
+        history_doc = col.insert_one.await_args_list[0][0][0]
+        assert history_doc["eventType"] == "team_updated"
+
+
+class TestCloseTeamWritesHistory:
+
+    async def test_close_team_appends_history_and_individual_changes(self, client: AsyncClient) -> None:
+        team_with_member = {
+            **ACTIVE_TEAM,
+            "members": [
+                {"personId": PERSON_ID, "personName": "jorge", "memberRole": "Member", "endDate": None},
+            ],
+        }
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=team_with_member)
+            resp = await client.delete(f"/teams/{TEAM_ID}")
+        assert resp.status_code == 204
+        # insert_one: 1 call for teamHistory
+        assert col.insert_one.await_count >= 1
+        history_doc = col.insert_one.await_args_list[0][0][0]
+        assert history_doc["eventType"] == "team_deleted"
+        # update_one called for: close team + each member's changeHistory
+        assert col.update_one.await_count >= 2
+
+
+class TestAddMemberWritesHistory:
+
+    async def test_add_member_appends_team_and_individual_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(side_effect=[ACTIVE_TEAM, INDIVIDUAL_DOC, ACTIVE_TEAM])
+            resp = await client.post(
+                f"/teams/{TEAM_ID}/members",
+                json={"person_id": PERSON_ID, "member_role": "Member"},
+            )
+        assert resp.status_code == 201
+        # insert_one: 1 for teamHistory
+        assert col.insert_one.await_count >= 1
+        history_doc = col.insert_one.await_args_list[0][0][0]
+        assert history_doc["eventType"] == "member_added"
+        # update_one called for: add member + individual changeHistory
+        assert col.update_one.await_count >= 2
+
+
+class TestRemoveMemberWritesHistory:
+
+    async def test_remove_member_appends_team_and_individual_history(self, client: AsyncClient) -> None:
+        team_with_member = {
+            **ACTIVE_TEAM,
+            "members": [{"personId": PERSON_ID, "personName": "jorge", "memberRole": "Member", "endDate": None}],
+        }
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=team_with_member)
+            resp = await client.delete(f"/teams/{TEAM_ID}/members/{PERSON_ID}")
+        assert resp.status_code == 204
+        # insert_one: 1 for teamHistory
+        assert col.insert_one.await_count >= 1
+        history_doc = col.insert_one.await_args_list[0][0][0]
+        assert history_doc["eventType"] == "member_removed"
+        # update_one called for: remove member + individual changeHistory
+        assert col.update_one.await_count >= 2

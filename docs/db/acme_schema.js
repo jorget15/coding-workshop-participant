@@ -35,10 +35,12 @@
 //        Business Intelligence and Credit Card Analytics).
 //
 //   [R4] Controlled Location References
-//        Locations are grouped into four global regions:
-//        NAM, LATAM, EMEA, APAC. Free-text city/country names
-//        are NOT allowed as location references in teams or
-//        individuals. Always reference a locations._id value.
+//        Teams reference an office via primaryLocation (locations._id).
+//        Individuals have a freeform homeLocation { city, country,
+//        region } for where they live, plus an optional
+//        assignedOffice (locations._id). Only teams are forced to
+//        pick from the locations collection. Individuals just need
+//        a valid region for co-location comparisons.
 //
 //   [R5] Soft Deletion Policy
 //        Records are NEVER physically deleted from the database.
@@ -186,7 +188,7 @@ acme.createCollection("individuals", {
     $jsonSchema: {
       bsonType: "object",
       required: [
-        "_id", "personName", "email", "primaryLocation",
+        "_id", "personName", "email", "homeLocation",
         "staffType", "roles", "isDeleted", "createdAt", "updatedAt"
       ],
       additionalProperties: false,
@@ -199,8 +201,29 @@ acme.createCollection("individuals", {
         // at the application layer.
         email:           { bsonType: "string", pattern: "^.+@.+\\..+$" },
 
-        // [R4] Must be a ref to locations._id, never a free-text city name.
-        primaryLocation: { bsonType: "string", description: "ref to locations._id" },
+        // Where this person lives / works from. NOT restricted to
+        // an ACME office — freeform city and country with a required
+        // region so co-location checks (R11) can compare against a
+        // team's office region.
+        homeLocation: {
+          bsonType: "object",
+          required: ["city", "country", "region"],
+          additionalProperties: false,
+          properties: {
+            city:    { bsonType: "string" },
+            country: { bsonType: "string" },
+            region:  { bsonType: "string", enum: ["NAM", "LATAM", "EMEA", "APAC"] }
+          },
+          description: "Where the individual lives. Region used for co-location checks."
+        },
+
+        // Optional: the ACME office this person is assigned to.
+        // References locations._id. Not required — remote workers
+        // may not have an assigned office.
+        assignedOffice: {
+          bsonType: "string",
+          description: "Optional ref to locations._id for on-site workers."
+        },
 
         // Current staff classification.
         // "direct" = full-time employee on ACME payroll.
@@ -249,6 +272,26 @@ acme.createCollection("individuals", {
           }
         },
 
+        // [R6] Change history — append-only audit trail.
+        // Every structural change (team join/leave, role change,
+        // profile edit, deactivation) produces a changeHistory entry.
+        // Entries are never modified or deleted.
+        changeHistory: {
+          bsonType: "array",
+          description: "Append-only audit trail. See [R6].",
+          items: {
+            bsonType: "object",
+            required: ["eventType", "description", "occurredAt"],
+            additionalProperties: false,
+            properties: {
+              eventType:   { bsonType: "string", description: "e.g. PROFILE_CREATED, JOINED_TEAM, LEFT_TEAM, DEACTIVATED" },
+              description: { bsonType: "string" },
+              occurredAt:  { bsonType: "string", description: "ISO 8601 timestamp" },
+              metadata:    { bsonType: "object", description: "Optional context — e.g. { teamId, teamName, changedFields }" }
+            }
+          }
+        },
+
         // [R5] Soft delete fields. Query { isDeleted: false }
         // for all standard lookups.
         isDeleted: { bsonType: "bool" },
@@ -264,8 +307,10 @@ acme.createCollection("individuals", {
 
 // Unique email — prevents duplicate accounts.
 acme.individuals.createIndex({ email: 1 }, { unique: true });
-// Supports "who is at this location?" queries.
-acme.individuals.createIndex({ primaryLocation: 1 });
+// Supports "who is in this region?" queries.
+acme.individuals.createIndex({ "homeLocation.region": 1 });
+// Supports "who is assigned to this office?" queries.
+acme.individuals.createIndex({ assignedOffice: 1 });
 // Supports non-direct ratio reports.
 acme.individuals.createIndex({ staffType: 1 });
 // Supports role-based access lookups.
@@ -664,7 +709,7 @@ acme.individuals.insertMany([
   // ---- Team Leaders ----
   // [R2] Each person below is the sole active Team Leader for exactly one team.
   {
-    // NOTE: Alice is in NYC (loc_nyc_hq) but leads team_001 based in Miami LATAM.
+    // NOTE: jorge is in NYC (loc_nyc_hq) but leads team_001 based in Miami LATAM.
     // This flags "leader not co-located" in business reports.
     // She is also "non-direct" — flags "leader is non-direct."
     _id: "person_101", personName: "Jorge taban",    email: "asmith@acme.com",
@@ -838,7 +883,7 @@ acme.teams.insertMany([
     teamName: "Data Platform",
     teamHomeLocation: "loc_miami_latam",
     members: [
-      // [R2] Exactly 1 Team Leader — Alice (loc_nyc_hq, non-direct) flags 2 business reports
+      // [R2] Exactly 1 Team Leader — jorge (loc_nyc_hq, non-direct) flags 2 business reports
       // [R1] Leader slot does not count toward the 5-member cap
       { personId: "person_101", memberRole: "Team Leader", staffTypeSnapshot: "non-direct", startDate: "2024-01-01", endDate: null },
       { personId: "person_201", memberRole: "Member",      staffTypeSnapshot: "direct",     startDate: "2024-01-01", endDate: null }, // 1 of 5

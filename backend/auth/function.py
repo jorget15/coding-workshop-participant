@@ -125,47 +125,37 @@ async def login(
     user_id = str(individual["_id"])
     username = individual.get("personName", "")
 
-    # Determine role — check for system_admin flag first, then team leadership
+    # Determine role — check for system_admin flag first, then derive from team membership
     roles: list = individual.get("roles", [])
     if "system_admin" in roles:
         role = "system_admin"
         team_id = None
     else:
-        # Check if this individual is an active Leader on any team
-        team = await db["teams"].find_one(
+        # Check if this individual is an active Team Leader or Delegate on any team
+        # Team Leaders and Delegates get team_lead permissions; Members get viewer
+        leader_team = await db["teams"].find_one(
             {
-                "isActive": True,
+                "isDeleted": {"$ne": True},
                 "members": {
                     "$elemMatch": {
-                        "memberId": user_id,
-                        "memberRole": "Leader",
+                        "personId": user_id,
+                        "memberRole": {"$in": ["Team Leader", "Delegate"]},
                         "endDate": None,
                     }
                 },
             }
         )
-        if team:
+        if leader_team:
             role = "team_lead"
-            team_id = str(team["_id"])
-        elif "editor" in roles:
-            role = "editor"
-            # Find their current active team membership
-            member_team = await db["teams"].find_one(
-                {
-                    "isActive": True,
-                    "members": {
-                        "$elemMatch": {"memberId": user_id, "endDate": None}
-                    },
-                }
-            )
-            team_id = str(member_team["_id"]) if member_team else None
+            team_id = str(leader_team["_id"])
         else:
+            # Regular Member or not on any team → viewer
             role = "viewer"
             member_team = await db["teams"].find_one(
                 {
-                    "isActive": True,
+                    "isDeleted": {"$ne": True},
                     "members": {
-                        "$elemMatch": {"memberId": user_id, "endDate": None}
+                        "$elemMatch": {"personId": user_id, "endDate": None}
                     },
                 }
             )
@@ -238,34 +228,38 @@ async def refresh(
 _SEED_USERS = [
     # ── Senior Leadership (system_admin) ──────────────────────────────
     {
-        "_id": "ind_001", "personName": "Jorge taban", "email": "alice@acme.com",
+        "_id": "ind_001", "personName": "Jorge taban", "email": "jorge@acme.com",
         "jobTitle": "VP of Engineering", "staffType": "direct",
-        "primaryLocation": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
-        "profilePicture": "avatars/defaults/default_01.png",
+        "homeLocation": {"city": "New York", "country": "United States", "region": "NAM"},
+        "assignedOffice": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
+        "profilePicture": "https://media.licdn.com/dms/image/v2/D4D03AQEoornDslAjcg/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1669043312332?e=1776902400&v=beta&t=W86bDbVfXJtMgHp4V3sUeIiYaeAiXKfE5qgOs03HFvg",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Admin1234!",
     },
     {
         "_id": "ind_002", "personName": "Raj Patel", "email": "raj@acme.com",
         "jobTitle": "CTO", "staffType": "direct",
-        "primaryLocation": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
+        "homeLocation": {"city": "New York", "country": "United States", "region": "NAM"},
+        "assignedOffice": "loc_nyc_hq", "roles": ["system_admin", "viewer"],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Admin1234!",
     },
     # ── Team Leaders (one per team, co-located per R11) ──────────────
     {
-        "_id": "ind_003", "personName": "Niel Escobar", "email": "bob@acme.com",
+        "_id": "ind_003", "personName": "Jorge2 Taban", "email": "Jorge2 @acme.com",
         "jobTitle": "Senior Platform Engineer", "staffType": "direct",
-        "primaryLocation": "loc_london_cw", "roles": ["team_lead"],
-        "profilePicture": "avatars/defaults/default_01.png",
+        "homeLocation": {"city": "London", "country": "United Kingdom", "region": "EMEA"},
+        "assignedOffice": "loc_london_cw", "roles": [],
+        "profilePicture": "https://media.licdn.com/dms/image/v2/D4D03AQEoornDslAjcg/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1669043312332?e=1776902400&v=beta&t=W86bDbVfXJtMgHp4V3sUeIiYaeAiXKfE5qgOs03HFvg",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
     },
     {
         "_id": "ind_004", "personName": "Maria Garcia", "email": "maria@acme.com",
         "jobTitle": "Head of Customer Success", "staffType": "direct",
-        "primaryLocation": "loc_miami_latam", "roles": ["team_lead"],
+        "homeLocation": {"city": "Miami", "country": "United States", "region": "LATAM"},
+        "assignedOffice": "loc_miami_latam", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
@@ -273,7 +267,8 @@ _SEED_USERS = [
     {
         "_id": "ind_005", "personName": "Yuki Tanaka", "email": "yuki@acme.com",
         "jobTitle": "Lead Data Scientist", "staffType": "direct",
-        "primaryLocation": "loc_singapore", "roles": ["team_lead"],
+        "homeLocation": {"city": "Singapore", "country": "Singapore", "region": "APAC"},
+        "assignedOffice": "loc_singapore", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
@@ -281,7 +276,8 @@ _SEED_USERS = [
     {
         "_id": "ind_006", "personName": "Hans Mueller", "email": "hans@acme.com",
         "jobTitle": "Head of Compliance", "staffType": "direct",
-        "primaryLocation": "loc_frankfurt", "roles": ["team_lead"],
+        "homeLocation": {"city": "Frankfurt", "country": "Germany", "region": "EMEA"},
+        "assignedOffice": "loc_frankfurt", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
@@ -289,7 +285,8 @@ _SEED_USERS = [
     {
         "_id": "ind_007", "personName": "Priya Sharma", "email": "priya@acme.com",
         "jobTitle": "Engineering Manager", "staffType": "direct",
-        "primaryLocation": "loc_mumbai", "roles": ["team_lead"],
+        "homeLocation": {"city": "Mumbai", "country": "India", "region": "APAC"},
+        "assignedOffice": "loc_mumbai", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Lead1234!",
@@ -298,7 +295,8 @@ _SEED_USERS = [
     {
         "_id": "ind_008", "personName": "Carol White", "email": "carol@acme.com",
         "jobTitle": "DevOps Engineer", "staffType": "direct",
-        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "homeLocation": {"city": "London", "country": "United Kingdom", "region": "EMEA"},
+        "assignedOffice": "loc_london_cw", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -306,7 +304,8 @@ _SEED_USERS = [
     {
         "_id": "ind_009", "personName": "Elena Russo", "email": "elena@acme.com",
         "jobTitle": "Data Analyst", "staffType": "direct",
-        "primaryLocation": "loc_dublin", "roles": ["editor"],
+        "homeLocation": {"city": "Dublin", "country": "Ireland", "region": "EMEA"},
+        "assignedOffice": "loc_dublin", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -314,7 +313,8 @@ _SEED_USERS = [
     {
         "_id": "ind_010", "personName": "James Okafor", "email": "james@acme.com",
         "jobTitle": "Full Stack Developer", "staffType": "direct",
-        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "homeLocation": {"city": "London", "country": "United Kingdom", "region": "EMEA"},
+        "assignedOffice": "loc_london_cw", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -322,7 +322,8 @@ _SEED_USERS = [
     {
         "_id": "ind_011", "personName": "Jet Chen", "email": "Jet@acme.com",
         "jobTitle": "Cloud Architect", "staffType": "direct",
-        "primaryLocation": "loc_singapore", "roles": ["editor"],
+        "homeLocation": {"city": "Singapore", "country": "Singapore", "region": "APAC"},
+        "assignedOffice": "loc_singapore", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -330,7 +331,8 @@ _SEED_USERS = [
     {
         "_id": "ind_012", "personName": "Dan Brown", "email": "dan@acme.com",
         "jobTitle": "Compliance Analyst", "staffType": "non-direct",
-        "primaryLocation": "loc_miami_latam", "roles": ["viewer"],
+        "homeLocation": {"city": "Miami", "country": "United States", "region": "LATAM"},
+        "assignedOffice": "loc_miami_latam", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
@@ -338,7 +340,8 @@ _SEED_USERS = [
     {
         "_id": "ind_013", "personName": "Fatima Al-Rashid", "email": "fatima@acme.com",
         "jobTitle": "Security Consultant", "staffType": "non-direct",
-        "primaryLocation": "loc_london_cw", "roles": ["editor"],
+        "homeLocation": {"city": "London", "country": "United Kingdom", "region": "EMEA"},
+        "assignedOffice": "loc_london_cw", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -346,7 +349,8 @@ _SEED_USERS = [
     {
         "_id": "ind_014", "personName": "Tom Wilson", "email": "tom@acme.com",
         "jobTitle": "QA Lead", "staffType": "direct",
-        "primaryLocation": "loc_nyc_park", "roles": ["editor"],
+        "homeLocation": {"city": "New York", "country": "United States", "region": "NAM"},
+        "assignedOffice": "loc_nyc_park", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -354,7 +358,8 @@ _SEED_USERS = [
     {
         "_id": "ind_015", "personName": "Suki Watanabe", "email": "suki@acme.com",
         "jobTitle": "UX Researcher", "staffType": "non-direct",
-        "primaryLocation": "loc_hong_kong", "roles": ["viewer"],
+        "homeLocation": {"city": "Hong Kong", "country": "China", "region": "APAC"},
+        "assignedOffice": "loc_hong_kong", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
@@ -362,7 +367,8 @@ _SEED_USERS = [
     {
         "_id": "ind_016", "personName": "Carlos Mendez", "email": "carlos@acme.com",
         "jobTitle": "Backend Developer", "staffType": "direct",
-        "primaryLocation": "loc_miami_latam", "roles": ["editor"],
+        "homeLocation": {"city": "Miami", "country": "United States", "region": "LATAM"},
+        "assignedOffice": "loc_miami_latam", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -370,7 +376,8 @@ _SEED_USERS = [
     {
         "_id": "ind_017", "personName": "Ananya Desai", "email": "ananya@acme.com",
         "jobTitle": "ML Engineer", "staffType": "direct",
-        "primaryLocation": "loc_mumbai", "roles": ["editor"],
+        "homeLocation": {"city": "Mumbai", "country": "India", "region": "APAC"},
+        "assignedOffice": "loc_mumbai", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Editor1234!",
@@ -378,7 +385,8 @@ _SEED_USERS = [
     {
         "_id": "ind_018", "personName": "Patrick O'Brien", "email": "patrick@acme.com",
         "jobTitle": "Regulatory Advisor", "staffType": "non-direct",
-        "primaryLocation": "loc_dublin", "roles": ["viewer"],
+        "homeLocation": {"city": "Dublin", "country": "Ireland", "region": "EMEA"},
+        "assignedOffice": "loc_dublin", "roles": [],
         "profilePicture": "avatars/defaults/default_01.png",
         "isDeleted": False, "deletedAt": None,
         "auth": {"hashedPassword": ""}, "_password": "Viewer1234!",
@@ -407,9 +415,9 @@ _SEED_TEAMS = [
         "_id": "team_001",
         "teamName": "Platform Engineering",
         "description": "Core infrastructure, CI/CD, and DevOps platform team.",
-        "primaryLocation": "loc_london_cw",
+        "teamHomeLocation": "loc_london_cw",
         "members": [
-            {"personId": "ind_003", "personName": "Niel Escobar",      "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-01-15T00:00:00Z", "endDate": None},
+            {"personId": "ind_003", "personName": "Jorge2 Taban",      "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-01-15T00:00:00Z", "endDate": None},
             {"personId": "ind_008", "personName": "Carol White",    "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
             {"personId": "ind_010", "personName": "James Okafor",   "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
             {"personId": "ind_013", "personName": "Fatima Al-Rashid","memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-03-01T00:00:00Z", "endDate": None},
@@ -420,7 +428,7 @@ _SEED_TEAMS = [
             {"orgLeaderId": "ind_001", "orgLeaderName": "Jorge taban", "startDate": "2025-01-15T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {"eventType": "TEAM_CREATED",  "description": "Platform Engineering team established.",            "occurredAt": "2025-01-15T00:00:00Z"},
+            {"eventType": "team_created",  "description": "Platform Engineering team established.",            "occurredAt": "2025-01-15T00:00:00Z"},
             {"eventType": "member_added",  "description": "Carol White joined as Member.",                     "occurredAt": "2025-02-01T00:00:00Z"},
             {"eventType": "member_added",  "description": "James Okafor joined as Member.",                    "occurredAt": "2025-02-01T00:00:00Z"},
             {"eventType": "member_added",  "description": "Fatima Al-Rashid joined as Member (non-direct).",   "occurredAt": "2025-03-01T00:00:00Z"},
@@ -433,7 +441,7 @@ _SEED_TEAMS = [
         "_id": "team_002",
         "teamName": "Customer Success - LATAM",
         "description": "Client relationship management and support escalation for Latin America.",
-        "primaryLocation": "loc_miami_latam",
+        "teamHomeLocation": "loc_miami_latam",
         "members": [
             {"personId": "ind_004", "personName": "Maria Garcia",   "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-03-01T00:00:00Z", "endDate": None},
             {"personId": "ind_016", "personName": "Carlos Mendez",  "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-03-15T00:00:00Z", "endDate": None},
@@ -443,7 +451,7 @@ _SEED_TEAMS = [
             {"orgLeaderId": "ind_001", "orgLeaderName": "Jorge taban", "startDate": "2025-03-01T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {"eventType": "TEAM_CREATED", "description": "Customer Success LATAM team established.", "occurredAt": "2025-03-01T00:00:00Z"},
+            {"eventType": "team_created", "description": "Customer Success LATAM team established.", "occurredAt": "2025-03-01T00:00:00Z"},
         ],
         "isDeleted": False, "deletedAt": None,
     },
@@ -451,7 +459,7 @@ _SEED_TEAMS = [
         "_id": "team_003",
         "teamName": "Data Platform",
         "description": "Data engineering, ML pipelines, and analytics infrastructure.",
-        "primaryLocation": "loc_singapore",
+        "teamHomeLocation": "loc_singapore",
         "members": [
             {"personId": "ind_005", "personName": "Yuki Tanaka",    "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-02-01T00:00:00Z", "endDate": None},
             {"personId": "ind_011", "personName": "Jet Chen",      "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-02-15T00:00:00Z", "endDate": None},
@@ -463,7 +471,7 @@ _SEED_TEAMS = [
             {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-02-01T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {"eventType": "TEAM_CREATED", "description": "Data Platform team established.", "occurredAt": "2025-02-01T00:00:00Z"},
+            {"eventType": "team_created", "description": "Data Platform team established.", "occurredAt": "2025-02-01T00:00:00Z"},
         ],
         "isDeleted": False, "deletedAt": None,
     },
@@ -471,7 +479,7 @@ _SEED_TEAMS = [
         "_id": "team_004",
         "teamName": "Regulatory & Compliance",
         "description": "Risk management, regulatory reporting, and internal audit support.",
-        "primaryLocation": "loc_frankfurt",
+        "teamHomeLocation": "loc_frankfurt",
         "members": [
             {"personId": "ind_006", "personName": "Hans Mueller",    "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-01-01T00:00:00Z", "endDate": None},
             {"personId": "ind_018", "personName": "Patrick O'Brien", "memberRole": "Member",      "staffTypeSnapshot": "non-direct", "startDate": "2025-01-15T00:00:00Z", "endDate": None},
@@ -481,7 +489,7 @@ _SEED_TEAMS = [
             {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-01-01T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {"eventType": "TEAM_CREATED", "description": "Regulatory & Compliance team established.", "occurredAt": "2025-01-01T00:00:00Z"},
+            {"eventType": "team_created", "description": "Regulatory & Compliance team established.", "occurredAt": "2025-01-01T00:00:00Z"},
         ],
         "isDeleted": False, "deletedAt": None,
     },
@@ -489,7 +497,7 @@ _SEED_TEAMS = [
         "_id": "team_005",
         "teamName": "Core Infrastructure - India",
         "description": "Backend services, API gateway, and microservices for APAC expansion.",
-        "primaryLocation": "loc_mumbai",
+        "teamHomeLocation": "loc_mumbai",
         "members": [
             {"personId": "ind_007", "personName": "Priya Sharma",   "memberRole": "Team Leader", "staffTypeSnapshot": "direct",     "startDate": "2025-04-01T00:00:00Z", "endDate": None},
             {"personId": "ind_017", "personName": "Ananya Desai",   "memberRole": "Member",      "staffTypeSnapshot": "direct",     "startDate": "2025-04-15T00:00:00Z", "endDate": None},
@@ -499,7 +507,7 @@ _SEED_TEAMS = [
             {"orgLeaderId": "ind_002", "orgLeaderName": "Raj Patel", "startDate": "2025-04-01T00:00:00Z", "endDate": None},
         ],
         "teamHistory": [
-            {"eventType": "TEAM_CREATED", "description": "Core Infrastructure India team established.", "occurredAt": "2025-04-01T00:00:00Z"},
+            {"eventType": "team_created", "description": "Core Infrastructure India team established.", "occurredAt": "2025-04-01T00:00:00Z"},
         ],
         "isDeleted": False, "deletedAt": None,
     },
@@ -509,20 +517,20 @@ _SEED_ACHIEVEMENTS = [
     # ── Platform Engineering (team_001) ───────────────────────────────
     {
         "_id": "ach_001", "teamId": "team_001",
-        "title": "Zero-downtime migration to new CI/CD pipeline",
-        "description": "Migrated 12 microservices to the new pipeline with no customer-facing downtime.",
+        "achievementTitle": "Zero-downtime migration to new CI/CD pipeline",
+        "achievementDescription": "Migrated 12 microservices to the new pipeline with no customer-facing downtime.",
         "achievementMonth": "2025-03", "impactMetric": "100% uptime maintained",
         "tags": ["devops", "infrastructure"],
         "contributors": [
-            {"personId": "ind_003", "personName": "Niel Escobar"},
+            {"personId": "ind_003", "personName": "Jorge2 Taban"},
             {"personId": "ind_008", "personName": "Carol White"},
         ],
         "createdBy": "ind_003",
     },
     {
         "_id": "ach_002", "teamId": "team_001",
-        "title": "Reduced build times by 60%",
-        "description": "Optimized Docker layer caching and parallelized test suites across the monorepo.",
+        "achievementTitle": "Reduced build times by 60%",
+        "achievementDescription": "Optimized Docker layer caching and parallelized test suites across the monorepo.",
         "achievementMonth": "2025-05", "impactMetric": "Build time: 12min → 5min",
         "tags": ["performance", "devops"],
         "contributors": [
@@ -533,8 +541,8 @@ _SEED_ACHIEVEMENTS = [
     },
     {
         "_id": "ach_003", "teamId": "team_001",
-        "title": "Infrastructure cost optimization",
-        "description": "Right-sized EC2 instances and migrated cold storage to S3 Glacier, saving $18k/month.",
+        "achievementTitle": "Infrastructure cost optimization",
+        "achievementDescription": "Right-sized EC2 instances and migrated cold storage to S3 Glacier, saving $18k/month.",
         "achievementMonth": "2025-08", "impactMetric": "$18k/month saved",
         "tags": ["cost-optimization", "cloud"],
         "contributors": [
@@ -546,8 +554,8 @@ _SEED_ACHIEVEMENTS = [
     # ── Customer Success LATAM (team_002) ─────────────────────────────
     {
         "_id": "ach_004", "teamId": "team_002",
-        "title": "Client retention improved to 94%",
-        "description": "Implemented proactive outreach program reducing churn by 6 percentage points YoY.",
+        "achievementTitle": "Client retention improved to 94%",
+        "achievementDescription": "Implemented proactive outreach program reducing churn by 6 percentage points YoY.",
         "achievementMonth": "2025-06", "impactMetric": "Retention: 88% → 94%",
         "tags": ["client-success", "latam"],
         "contributors": [
@@ -558,8 +566,8 @@ _SEED_ACHIEVEMENTS = [
     },
     {
         "_id": "ach_005", "teamId": "team_002",
-        "title": "Launched Spanish-language support portal",
-        "description": "Built and shipped a fully localized self-service portal for LATAM clients.",
+        "achievementTitle": "Launched Spanish-language support portal",
+        "achievementDescription": "Built and shipped a fully localized self-service portal for LATAM clients.",
         "achievementMonth": "2025-09", "impactMetric": "40% reduction in support tickets",
         "tags": ["localization", "client-success"],
         "contributors": [
@@ -571,8 +579,8 @@ _SEED_ACHIEVEMENTS = [
     # ── Data Platform (team_003) ──────────────────────────────────────
     {
         "_id": "ach_006", "teamId": "team_003",
-        "title": "Real-time fraud detection pipeline launched",
-        "description": "Deployed Kafka-based streaming pipeline processing 50k events/sec with <200ms latency.",
+        "achievementTitle": "Real-time fraud detection pipeline launched",
+        "achievementDescription": "Deployed Kafka-based streaming pipeline processing 50k events/sec with <200ms latency.",
         "achievementMonth": "2025-04", "impactMetric": "50k events/sec, <200ms p99",
         "tags": ["data-engineering", "fraud"],
         "contributors": [
@@ -584,8 +592,8 @@ _SEED_ACHIEVEMENTS = [
     },
     {
         "_id": "ach_007", "teamId": "team_003",
-        "title": "Data lake migration to Iceberg format",
-        "description": "Migrated 4TB of historical data from Parquet to Apache Iceberg with zero downtime.",
+        "achievementTitle": "Data lake migration to Iceberg format",
+        "achievementDescription": "Migrated 4TB of historical data from Parquet to Apache Iceberg with zero downtime.",
         "achievementMonth": "2025-07", "impactMetric": "30% query cost reduction",
         "tags": ["data-engineering", "migration"],
         "contributors": [
@@ -597,8 +605,8 @@ _SEED_ACHIEVEMENTS = [
     # ── Regulatory & Compliance (team_004) ────────────────────────────
     {
         "_id": "ach_008", "teamId": "team_004",
-        "title": "EU DORA compliance framework implemented",
-        "description": "Completed gap analysis and implemented all required controls ahead of the January 2025 deadline.",
+        "achievementTitle": "EU DORA compliance framework implemented",
+        "achievementDescription": "Completed gap analysis and implemented all required controls ahead of the January 2025 deadline.",
         "achievementMonth": "2025-01", "impactMetric": "100% DORA controls in place",
         "tags": ["compliance", "regulatory", "emea"],
         "contributors": [
@@ -610,8 +618,8 @@ _SEED_ACHIEVEMENTS = [
     # ── Core Infrastructure India (team_005) ──────────────────────────
     {
         "_id": "ach_009", "teamId": "team_005",
-        "title": "API gateway v2 with rate limiting",
-        "description": "Shipped new API gateway with token-bucket rate limiting and circuit breaker patterns.",
+        "achievementTitle": "API gateway v2 with rate limiting",
+        "achievementDescription": "Shipped new API gateway with token-bucket rate limiting and circuit breaker patterns.",
         "achievementMonth": "2025-06", "impactMetric": "99.95% availability SLA met",
         "tags": ["backend", "reliability"],
         "contributors": [
@@ -622,8 +630,8 @@ _SEED_ACHIEVEMENTS = [
     },
     {
         "_id": "ach_010", "teamId": "team_005",
-        "title": "Microservices observability rollout",
-        "description": "Deployed OpenTelemetry tracing across all 20 APAC microservices.",
+        "achievementTitle": "Microservices observability rollout",
+        "achievementDescription": "Deployed OpenTelemetry tracing across all 20 APAC microservices.",
         "achievementMonth": "2025-08", "impactMetric": "MTTR reduced from 45min to 12min",
         "tags": ["observability", "reliability"],
         "contributors": [
@@ -635,8 +643,8 @@ _SEED_ACHIEVEMENTS = [
     # ── Org-wide (no team) ────────────────────────────────────────────
     {
         "_id": "ach_011", "teamId": None,
-        "title": "SOC 2 Type II audit passed with zero findings",
-        "description": "Company-wide audit completed covering all production systems and data handling procedures.",
+        "achievementTitle": "SOC 2 Type II audit passed with zero findings",
+        "achievementDescription": "Company-wide audit completed covering all production systems and data handling procedures.",
         "achievementMonth": "2025-04", "impactMetric": "0 critical findings",
         "tags": ["security", "compliance"],
         "contributors": [
@@ -648,8 +656,8 @@ _SEED_ACHIEVEMENTS = [
     },
     {
         "_id": "ach_012", "teamId": None,
-        "title": "Global hackathon: AI-powered onboarding assistant",
-        "description": "Cross-team hackathon winning project — an LLM-based assistant that reduced new hire ramp-up time by 30%.",
+        "achievementTitle": "Global hackathon: AI-powered onboarding assistant",
+        "achievementDescription": "Cross-team hackathon winning project — an LLM-based assistant that reduced new hire ramp-up time by 30%.",
         "achievementMonth": "2025-10", "impactMetric": "30% faster onboarding",
         "tags": ["innovation", "hackathon", "ai"],
         "contributors": [
@@ -670,72 +678,96 @@ _SEED_ACHIEVEMENTS = [
 )
 async def seed_database(
     force: bool = False,
+    collection: Optional[str] = None,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    """Seed test data. Use ?collection=locations|individuals|teams|achievements
+    to seed one collection at a time (avoids CloudFront 30s timeout).
+    Omit collection to seed everything at once."""
+    import traceback as _tb
+    try:
+        return await _do_seed(force, db, collection)
+    except Exception as exc:
+        logger.error("Seed failed: %s\n%s", exc, _tb.format_exc())
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+async def _do_seed(force: bool, db: AsyncIOMotorDatabase, collection: Optional[str] = None):
     now = datetime.now(timezone.utc).isoformat()
-    results = {"locations": [], "individuals": [], "teams": [], "achievements": []}
+    results = {"locations": 0, "individuals": 0, "teams": 0, "achievements": 0}
+    targets = [collection] if collection else ["locations", "individuals", "teams", "achievements"]
+
+    if force:
+        if "locations" in targets:
+            await db["locations"].delete_many({"_id": {"$in": [l["_id"] for l in _SEED_LOCATIONS]}})
+        if "individuals" in targets:
+            ind_ids = [u["_id"] for u in _SEED_USERS]
+            ind_emails = [u["email"] for u in _SEED_USERS]
+            await db["individuals"].delete_many({"$or": [{"_id": {"$in": ind_ids}}, {"email": {"$in": ind_emails}}]})
+        if "teams" in targets:
+            team_ids = [t["_id"] for t in _SEED_TEAMS]
+            await db["teams"].delete_many({"_id": {"$in": team_ids}})
+            await db["teamHistory"].delete_many({"teamId": {"$in": team_ids}})
+        if "achievements" in targets:
+            await db["achievements"].delete_many({"_id": {"$in": [a["_id"] for a in _SEED_ACHIEVEMENTS]}})
 
     # --- Locations ---
-    for loc in _SEED_LOCATIONS:
-        existing = await db["locations"].find_one({"_id": loc["_id"]})
-        if existing and not force:
-            results["locations"].append({"id": loc["_id"], "status": "skipped"})
-        else:
-            if existing:
-                await db["locations"].delete_one({"_id": loc["_id"]})
-            await db["locations"].insert_one(loc)
-            results["locations"].append({"id": loc["_id"], "status": "created" if not existing else "replaced"})
+    if "locations" in targets:
+        new_locs = []
+        for loc in _SEED_LOCATIONS:
+            existing = await db["locations"].find_one({"_id": loc["_id"]})
+            if not existing:
+                new_locs.append(loc)
+        if new_locs:
+            await db["locations"].insert_many(new_locs)
+        results["locations"] = len(new_locs)
 
     # --- Individuals ---
-    for template in _SEED_USERS:
-        existing = await db["individuals"].find_one({"email": template["email"]})
-        if existing and not force:
-            results["individuals"].append({"email": template["email"], "status": "skipped"})
-            continue
-
-        if existing:
-            await db["individuals"].delete_one({"_id": existing["_id"]})
-
-        # Build the insert doc — hash the password and remove the _password key
-        doc = {k: v for k, v in template.items() if k != "_password"}
-        doc["auth"]["hashedPassword"] = hash_password(template["_password"])
-        doc["createdAt"] = now
-        doc["updatedAt"] = now
-        await db["individuals"].insert_one(doc)
-        results["individuals"].append({"email": template["email"], "status": "created" if not existing else "replaced"})
+    if "individuals" in targets:
+        new_inds = []
+        for template in _SEED_USERS:
+            existing = await db["individuals"].find_one({"email": template["email"]})
+            if not existing:
+                doc = {k: v for k, v in template.items() if k != "_password"}
+                doc["auth"]["hashedPassword"] = hash_password(template["_password"])
+                doc["createdAt"] = now
+                doc["updatedAt"] = now
+                new_inds.append(doc)
+        if new_inds:
+            await db["individuals"].insert_many(new_inds)
+        results["individuals"] = len(new_inds)
 
     # --- Teams ---
-    for team in _SEED_TEAMS:
-        existing = await db["teams"].find_one({"_id": team["_id"]})
-        if existing and not force:
-            results["teams"].append({"id": team["_id"], "status": "skipped"})
-        else:
-            if existing:
-                await db["teams"].delete_one({"_id": team["_id"]})
-            doc = {**team, "createdAt": now, "updatedAt": now}
-            await db["teams"].insert_one(doc)
-            results["teams"].append({"id": team["_id"], "status": "created" if not existing else "replaced"})
+    if "teams" in targets:
+        new_teams = []
+        for team in _SEED_TEAMS:
+            existing = await db["teams"].find_one({"_id": team["_id"]})
+            if not existing:
+                new_teams.append({**team, "createdAt": now, "updatedAt": now})
+        if new_teams:
+            await db["teams"].insert_many(new_teams)
+        results["teams"] = len(new_teams)
 
     # --- Achievements ---
-    for ach in _SEED_ACHIEVEMENTS:
-        existing = await db["achievements"].find_one({"_id": ach["_id"]})
-        if existing and not force:
-            results["achievements"].append({"id": ach["_id"], "status": "skipped"})
-        else:
-            if existing:
-                await db["achievements"].delete_one({"_id": ach["_id"]})
-            doc = {**ach, "createdAt": now}
-            await db["achievements"].insert_one(doc)
-            results["achievements"].append({"id": ach["_id"], "status": "created" if not existing else "replaced"})
+    if "achievements" in targets:
+        new_achs = []
+        for ach in _SEED_ACHIEVEMENTS:
+            existing = await db["achievements"].find_one({"_id": ach["_id"]})
+            if not existing:
+                new_achs.append({**ach, "createdAt": now})
+        if new_achs:
+            await db["achievements"].insert_many(new_achs)
+        results["achievements"] = len(new_achs)
 
     return {
         "message": "Seed complete",
+        "seeded": targets,
         "results": results,
         "credentials": [
-            {"email": "alice@acme.com", "password": "Admin1234!", "role": "system_admin"},
-            {"email": "bob@acme.com", "password": "Lead1234!", "role": "team_lead"},
-            {"email": "carol@acme.com", "password": "Editor1234!", "role": "editor"},
-            {"email": "dan@acme.com", "password": "Viewer1234!", "role": "viewer"},
+            {"email": "Jorge@acme.com", "password": "Admin1234!", "role": "system_admin"},
+            {"email": "Jorge2 @acme.com", "password": "Lead1234!", "role": "team_lead (derived from Team Leader membership)"},
+            {"email": "carol@acme.com", "password": "Editor1234!", "role": "team_lead (derived from Delegate membership)"},
+            {"email": "dan@acme.com", "password": "Viewer1234!", "role": "viewer (derived from Member membership)"},
         ],
     }
 

@@ -20,7 +20,7 @@ export default function TeamAchievements() {
   const [month, setMonth] = useState(DEFAULT_MONTH)
 
   const modal = useFormModal(
-    { title: '', description: '', achievement_date: DEFAULT_MONTH },
+    { achievement_title: '', achievement_description: '', achievement_month: DEFAULT_MONTH },
     createAchievementAsync as Parameters<typeof useFormModal>[1],
     'Achievement created'
   )
@@ -33,7 +33,7 @@ export default function TeamAchievements() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!modal.form.title.trim()) { toast.error('Title is required'); return }
+    if (!modal.form.achievement_title.trim()) { toast.error('Title is required'); return }
     modal.submit({ ...modal.form, team_id: teamId ?? undefined, scope: 'team' })
   }
 
@@ -57,9 +57,9 @@ export default function TeamAchievements() {
         : <div className="flex flex-col gap-3">{filtered.map(a => <AchievementCard key={a._id} achievement={a} />)}</div>}
 
       <FormModal open={modal.open} onClose={modal.reset} title="New Achievement" submitting={modal.submitting} onSubmit={handleSubmit}>
-        <FormInput label="Title *" value={modal.form.title} onChange={v => modal.field('title', v)} required />
-        <FormInput label="Description" value={modal.form.description} onChange={v => modal.field('description', v)} />
-        <FormInput label="Month" value={modal.form.achievement_date} onChange={v => modal.field('achievement_date', v)} type="month" />
+        <FormInput label="Title *" value={modal.form.achievement_title} onChange={v => modal.field('achievement_title', v)} required />
+        <FormInput label="Description" value={modal.form.achievement_description} onChange={v => modal.field('achievement_description', v)} />
+        <MonthPicker label="Month" value={modal.form.achievement_month} onChange={v => modal.field('achievement_month', v)} />
       </FormModal>
     </div>
   )

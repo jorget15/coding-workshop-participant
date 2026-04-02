@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import api, { apiError } from '../api'
 
 /** Matches the roles[] array on the individuals collection (R10 in business_decisions.md). */
-export type Role = 'system_admin' | 'team_lead' | 'editor' | 'viewer' | 'non-direct'
+export type Role = 'system_admin' | 'team_lead' | 'viewer'
 
 export interface AuthUser {
   userId:    string

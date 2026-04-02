@@ -17,7 +17,7 @@ export default function TeamCard({ team, locations, basePath = '/admin/teams' }:
   const nonDirect     = allActive.filter(m => m.staffTypeSnapshot === 'non-direct')
   const ratio         = allActive.length ? nonDirect.length / allActive.length : 0
   const leader        = team.members.find(m => m.memberRole === 'Team Leader' && m.endDate === null)
-  const loc           = locations.find(l => l._id === team.primaryLocation)
+  const loc           = locations.find(l => l._id === team.teamHomeLocation)
 
   return (
     <Link

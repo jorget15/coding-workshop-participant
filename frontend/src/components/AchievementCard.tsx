@@ -1,5 +1,7 @@
 import type { Achievement } from '../store/teamSlice'
 import { Link } from 'react-router-dom'
+import Avatar from './Avatar'
+import { formatMonth } from './MonthPicker'
 
 interface Props {
   achievement: Achievement
@@ -14,7 +16,7 @@ export default function AchievementCard({ achievement, teamName, onEdit }: Props
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <h3 className="text-acme-heading font-semibold text-base">{achievement.title}</h3>
+            <h3 className="text-acme-heading font-semibold text-base">{achievement.achievementTitle}</h3>
             {teamName && (
               <Link
                 to={`/admin/teams/${achievement.teamId}`}
@@ -23,9 +25,9 @@ export default function AchievementCard({ achievement, teamName, onEdit }: Props
                 {teamName}
               </Link>
             )}
-            <span className="text-xs text-acme-muted">{achievement.achievementMonth}</span>
+            <span className="text-xs text-acme-muted">{formatMonth(achievement.achievementMonth)}</span>
           </div>
-          <p className="text-acme-text text-sm">{achievement.description}</p>
+          <p className="text-acme-text text-sm">{achievement.achievementDescription}</p>
         </div>
         {onEdit && (
           <button
@@ -56,18 +58,11 @@ export default function AchievementCard({ achievement, teamName, onEdit }: Props
       {achievement.contributors.length > 0 && (
         <div className="flex items-center gap-2">
           <div className="flex -space-x-2">
-            {achievement.contributors.slice(0, 5).map(c => {
-              const initials = c.personName.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
-              return (
-                <div
-                  key={c.personId}
-                  title={c.personName}
-                  className="w-7 h-7 rounded-full bg-acme-action/10 border-2 border-acme-card flex items-center justify-center"
-                >
-                  <span className="text-acme-action text-[10px] font-bold">{initials}</span>
+            {achievement.contributors.slice(0, 5).map(c => (
+                <div key={c.personId} title={c.personName} className="border-2 border-acme-card rounded-full">
+                  <Avatar name={c.personName} size="xs" />
                 </div>
-              )
-            })}
+            ))}
           </div>
           <span className="text-acme-muted text-xs">{achievement.contributors.length} contributor{achievement.contributors.length > 1 ? 's' : ''}</span>
         </div>

@@ -32,15 +32,15 @@ This document records the key business decisions, trade-offs, and design rationa
 
 ---
 
-## 3. Team Size Cap — Max 5 Members Excluding the Leader (Rule R1)
+## 3. Team Size Cap — Max 5 Total Active Members Including the Leader (Rule R1)
 
-**Decision:** Each team may have at most 5 active members with the role `"Member"`. The Team Leader does not count toward this cap. The Delegate role (if present) also does not count.
+**Decision:** Each team may have at most 5 active members in total across all roles (`"Team Leader"`, `"Member"`, `"Delegate"`). The Team Leader counts toward this cap.
 
 **Why:**
-- This cap reflects ACME's operating philosophy that small, focused teams are more effective. Five members plus a dedicated leader keeps teams lean enough for close collaboration while large enough to handle meaningful workstreams.
+- This cap reflects ACME's operating philosophy that small, focused teams are more effective. The limit of 5 covers everyone on the team — including the leader — so the true headcount is never more than 5.
 - The cap applies only to **active** members (those with `endDate: null`). Historical/closed entries (where a member departed and `endDate` is set) remain in the array for audit purposes and do not count.
 
-**Schema enforcement:** The schema does **not** use `maxItems` on the members array. A hard `maxItems` ceiling would count both active and closed entries — after even one person left a team (creating a closed entry that stays in the array for audit purposes), the cap would block adding a replacement. The 5-member limit is enforced purely at the application layer by counting entries where `memberRole === "Member" && endDate === null`.
+**Schema enforcement:** The schema does **not** use `maxItems` on the members array. A hard `maxItems` ceiling would count both active and closed entries — after even one person left a team (creating a closed entry that stays in the array for audit purposes), the cap would block adding a replacement. The 5-member limit is enforced purely at the application layer by counting all entries where `endDate === null`.
 
 ---
 
@@ -189,7 +189,7 @@ This document records the key business decisions, trade-offs, and design rationa
 
 | Rule | What | Enforced By |
 |------|------|-------------|
-| R1 | Max 5 active members per team | Application layer |
+| R1 | Max 5 active members per team (all roles, including Team Leader) | Application layer |
 | R2 | Exactly 1 active Team Leader per team | Application layer |
 | R3 | Multi-team membership allowed | Schema (no constraint) |
 | R4 | Locations referenced by `_id` only | Schema (`required` + no free-text) |
@@ -200,7 +200,7 @@ This document records the key business decisions, trade-offs, and design rationa
 | R9 | Max 1 active Delegate per team | Application layer |
 | R10 | Team Leader cannot lead or be a member of any other team | Application layer |
 | — | Email uniqueness | Schema (unique index) |
-| — | Region enum (NAM/LATAM/EU/APAC) | Schema (enum constraint) |
+| — | Region enum (NAM/LATAM/EMEA/APAC) | Schema (enum constraint) |
 | — | Achievement month format (YYYY-MM) | Schema (regex pattern) |
 | — | Member role enum | Schema (enum constraint) |
 | — | Staff type enum | Schema (enum constraint) |
@@ -213,10 +213,51 @@ The following questions must be answerable from the data and surfaced in the app
 
 | # | Question | Key fields |
 |---|----------|------------|
-| Q1 | Who are the members of each team? | `teams.members` (active entries where `endDate === null`) cross-referenced with `individuals` for name/location |
-| Q2 | Where are the teams located? | `teams.primaryLocation` → `locations._id` / `locations.locationName` |
-| Q3 | What are the key achievements of each team on a monthly basis? | `achievements.teamId`, `achievements.achievementMonth` (YYYY-MM) |
-| Q4 | How many teams have a Team Leader not co-located with their team members? | Compare Team Leader's `individuals.primaryLocation` against each active member's `individuals.primaryLocation`; count teams where at least one member differs |
-| Q5 | How many teams have a Team Leader who is non-direct staff? | Look up the active Team Leader's `individuals.staffType`; count teams where `staffType === "non-direct"` |
-| Q6 | How many teams have a non-direct staff to employee ratio above 20%? | Among active `"Member"` entries, count `staffTypeSnapshot === "non-direct"` / total; flag teams above 20% (see Decision #14) |
-| Q7 | How many teams are reporting to an organisation leader? | Count teams with at least one active entry in `reportingHistory` (i.e., `reportingHistory` array is non-empty and the latest entry has `endDate === null`) |
+| Q1 | Who are the members of each team? | `teams.members[]` where `endDate === null`, joined to `individuals` for `personName`, `jobTitle`, `homeLocation` |
+| Q2 | Where are the teams located? | `teams.teamHomeLocation` → `locations._id`, `locations.name`, `locations.city`, `locations.region` |
+| Q3 | What are the key achievements of each team on a monthly basis? | `achievements.teamId`, `achievements.achievementMonth` (YYYY-MM), `achievements.achievementTitle`, `achievements.impactMetric` |
+| Q4 | How many teams have a Team Leader not co-located with the team? | Compare the active Team Leader's `individuals.assignedOffice` (or `individuals.homeLocation.region`) against `teams.teamHomeLocation` region; count teams where they differ. Also compute global member co-location: for all active members across all teams, compare `assignedOffice` or `homeLocation.region` against the team's office region, expressed as a percentage |
+| Q5 | How many teams have a Team Leader who is non-direct staff? | Look up the active Team Leader entry's `staffTypeSnapshot`; count teams where `staffTypeSnapshot === "non-direct"` |
+| Q6 | How many teams have a non-direct staff to employee ratio above 20%? | Among active `"Member"` entries only (exclude Team Leader), compute `count(staffTypeSnapshot === "non-direct") / count(all)`; flag teams above 20% (see Decision #14) |
+| Q7 | How many teams are reporting to an organisation leader? | Count teams where `reportingHistory` contains at least one entry with `endDate === null` |
+
+---
+
+## Metric Cards & Charts
+
+The following additional metrics and visualisations can be derived from the existing schema and are worth surfacing in the dashboard.
+
+### Overview Cards
+
+| Card | Value | Source |
+|------|-------|--------|
+| Total active teams | `count(teams where isDeleted === false)` | `teams` |
+| Total individuals | `count(individuals where isDeleted === false)` | `individuals` |
+| Achievements this month | `count(achievements where achievementMonth === current YYYY-MM and isDeleted === false)` | `achievements` |
+| Teams at full capacity | `count(teams where total active member count === 5)` | `teams.members` |
+
+### Team Health Flag Cards
+
+These directly answer Q4–Q7 as single-number cards for a health overview panel.
+
+| Card | Value | Source |
+|------|-------|--------|
+| Leaders not co-located with team | Count of teams where leader's `primaryLocation ≠ teamHomeLocation` | `teams` + `individuals` |
+| Global member co-location rate | `count(active members whose primaryLocation === their team's teamHomeLocation) / count(all active members)` as a % | `teams.members` + `individuals` |
+| Non-direct Team Leaders | Count of teams where leader's `staffTypeSnapshot === "non-direct"` | `teams.members` |
+| Teams above 20% non-direct ratio | Count of teams where member non-direct ratio > 20% | `teams.members` |
+| Teams without an active reporting line | Count of teams where no `reportingHistory` entry has `endDate === null` | `teams.reportingHistory` |
+
+### Charts
+
+| Chart | Type | What it shows | Source |
+|-------|------|---------------|--------|
+| Teams by region | Bar / donut | Distribution of `teamHomeLocation` across NAM / LATAM / EMEA / APAC | `teams` + `locations.region` |
+| Co-location rate per team | Bar | Per-team percentage of members whose `primaryLocation` matches `teamHomeLocation` | `teams.members` + `individuals` |
+| Headcount by region | Bar | Active individuals grouped by `primaryLocation` → `locations.region` | `individuals` + `locations` |
+| Direct vs non-direct breakdown | Donut | Global split of `individuals.staffType` across all active individuals | `individuals.staffType` |
+| Achievements per month (trend) | Line | Count of achievements grouped by `achievementMonth` over the last 6–12 months | `achievements.achievementMonth` |
+| Achievements per team | Horizontal bar | Total achievements per team, sorted descending | `achievements.teamId` |
+| Top achievement tags | Bar / tag cloud | Most frequently used values in `achievements.tags[]` | `achievements.tags` |
+| Teams per org leader | Bar | How many active teams report to each `orgLeaderId` | `teams.reportingHistory` + `individuals.personName` |
+| Multi-team members | Number / table | Individuals who are active members on 2+ teams simultaneously | `teams.members` grouped by `personId` |

@@ -24,18 +24,20 @@ INDIVIDUAL_ID = "ind_alice_001"
 
 VALID_PAYLOAD = {
     "person_name": "Jorge taban",
-    "email": "alice@acme.com",
+    "email": "jorge@acme.com",
     "staff_type": "direct",
+    "home_location": {"city": "New York", "country": "United States", "region": "NAM"},
     "password": "Secret1234!",
 }
 
 EXISTING_DOC = {
     "_id": INDIVIDUAL_ID,
     "personName": "Jorge taban",
-    "email": "alice@acme.com",
+    "email": "jorge@acme.com",
     "staffType": "direct",
     "jobTitle": "Analyst",
-    "primaryLocation": "loc_hq",
+    "homeLocation": {"city": "New York", "country": "United States", "region": "NAM"},
+    "assignedOffice": "loc_nyc_hq",
     "profilePicture": "avatars/defaults/default_01.png",
     "isDeleted": False,
     "createdAt": "2026-01-01T00:00:00+00:00",
@@ -77,7 +79,7 @@ class TestListIndividuals:
 
     async def test_filter_by_search(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin"):
-            resp = await client.get("/individuals?search=alice")
+            resp = await client.get("/individuals?search=jorge")
         assert resp.status_code == 200
 
     async def test_unauthenticated_is_rejected(self, client: AsyncClient) -> None:
@@ -96,7 +98,7 @@ class TestGetIndividual:
             resp = await client.get(f"/individuals/{INDIVIDUAL_ID}")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["email"] == "alice@acme.com"
+        assert body["email"] == "jorge@acme.com"
         assert body["personName"] == "Jorge taban"
         assert "auth" not in body
 
@@ -152,7 +154,7 @@ class TestCreateIndividual:
 
     async def test_duplicate_email_returns_409(self, client: AsyncClient) -> None:
         with override_deps(app, role="system_admin") as (_, col, _):
-            col.find_one = AsyncMock(return_value={"email": "alice@acme.com"})
+            col.find_one = AsyncMock(return_value={"email": "jorge@acme.com"})
             resp = await client.post("/individuals", json=VALID_PAYLOAD)
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
@@ -318,3 +320,104 @@ class TestAvatarUploadUrl:
                 resp = await client.post(f"/individuals/{INDIVIDUAL_ID}/avatar-upload-url")
         assert resp.status_code == 500
         assert "S3_BUCKET" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Individual History
+# ---------------------------------------------------------------------------
+
+
+class TestGetIndividualHistory:
+
+    async def test_admin_can_view_any_history(self, client: AsyncClient) -> None:
+        doc_with_history = {
+            "_id": INDIVIDUAL_ID,
+            "changeHistory": [
+                {"eventType": "PROFILE_CREATED", "occurredAt": "2026-01-01T00:00:00", "description": "Created."},
+                {"eventType": "JOINED_TEAM", "occurredAt": "2026-01-02T00:00:00", "description": "Joined Alpha."},
+            ],
+        }
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=doc_with_history)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        # Newest first (reversed by route)
+        assert data[0]["eventType"] == "JOINED_TEAM"
+        assert data[1]["eventType"] == "PROFILE_CREATED"
+
+    async def test_user_can_view_own_history(self, client: AsyncClient) -> None:
+        doc_with_history = {
+            "_id": "test_user_id",
+            "changeHistory": [
+                {"eventType": "PROFILE_CREATED", "occurredAt": "2026-01-01T00:00:00", "description": "Created."},
+            ],
+        }
+        with override_deps(app, role="viewer") as (_, col, user):
+            col.find_one = AsyncMock(return_value=doc_with_history)
+            resp = await client.get(f"/individuals/{user.user_id}/history")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+
+    async def test_viewer_cannot_view_others_history(self, client: AsyncClient) -> None:
+        with override_deps(app, role="viewer"):
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}/history")
+        assert resp.status_code == 403
+
+    async def test_team_lead_can_view_member_history(self, client: AsyncClient) -> None:
+        doc_with_history = {"_id": INDIVIDUAL_ID, "changeHistory": []}
+        with override_deps(app, role="team_lead", team_id="team_001") as (_, col, _):
+            col.find_one = AsyncMock(return_value=doc_with_history)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}/history")
+        assert resp.status_code == 200
+
+    async def test_returns_404_for_missing_individual(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=None)
+            resp = await client.get(f"/individuals/nonexistent/history")
+        assert resp.status_code == 404
+
+    async def test_returns_empty_for_no_history(self, client: AsyncClient) -> None:
+        doc_no_history = {"_id": INDIVIDUAL_ID}
+        with override_deps(app, role="system_admin") as (_, col, _):
+            col.find_one = AsyncMock(return_value=doc_no_history)
+            resp = await client.get(f"/individuals/{INDIVIDUAL_ID}/history")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestCreateIndividualWritesHistory:
+
+    async def test_create_appends_profile_created(self, client: AsyncClient) -> None:
+        with override_deps(app, role="system_admin") as (_, col, _):
+            resp = await client.post("/individuals", json=VALID_PAYLOAD)
+        assert resp.status_code == 201
+        # The inserted doc should contain a changeHistory array with PROFILE_CREATED
+        insert_call = col.insert_one.await_args_list[0]
+        doc = insert_call[0][0]
+        assert "changeHistory" in doc
+        assert len(doc["changeHistory"]) == 1
+        assert doc["changeHistory"][0]["eventType"] == "PROFILE_CREATED"
+
+
+class TestDeactivateIndividualWritesHistory:
+
+    async def test_deactivate_appends_deactivated(self, client: AsyncClient) -> None:
+        existing = {
+            "_id": INDIVIDUAL_ID,
+            "personName": "Dan Brown",
+            "isDeleted": False,
+        }
+        with override_deps(app, role="system_admin") as (_, col, _):
+            # First find_one: team lookup for R4 check (None = not on active team)
+            # Second find_one: the individual doc
+            col.find_one = AsyncMock(side_effect=[None, existing])
+            resp = await client.delete(f"/individuals/{INDIVIDUAL_ID}")
+        assert resp.status_code == 200
+        # update_one called twice: soft-delete + changeHistory push
+        assert col.update_one.await_count == 2
+        change_call = col.update_one.await_args_list[1]
+        push_op = change_call[0][1]
+        change_entry = push_op["$push"]["changeHistory"]
+        assert change_entry["eventType"] == "DEACTIVATED"

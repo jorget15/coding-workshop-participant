@@ -17,6 +17,7 @@ const ADMIN_LINKS: NavItem[] = [
   { label: 'Achievements', to: '/admin/achievements' },
   { label: 'Locations',    to: '/admin/locations' },
   { label: 'Reports',      to: '/admin/reports' },
+  { label: 'Metrics',      to: '/admin/metrics' },
 ]
 
 const TEAM_LEAD_LINKS: NavItem[] = [
@@ -35,19 +36,11 @@ const EDITOR_LINKS: NavItem[] = [
   { label: 'My Profile',   to: '/profile' },
 ]
 
-const NON_DIRECT_LINKS: NavItem[] = [
-  { label: 'My Team',      to: '/team' },
-  { label: 'Achievements', to: '/achievements' },
-  { label: 'My Profile',   to: '/profile' },
-]
-
 function linksForRole(role: Role | null | undefined): NavItem[] {
   switch (role) {
     case 'system_admin': return ADMIN_LINKS
     case 'team_lead':    return TEAM_LEAD_LINKS
-    case 'editor':
     case 'viewer':       return EDITOR_LINKS
-    case 'non-direct':   return NON_DIRECT_LINKS
     default:             return []
   }
 }

@@ -30,7 +30,7 @@ export default function AdminTeamList() {
   const active = teams.filter(t => !t.isDeleted)
   const filtered = active.filter(t => {
     const matchSearch  = t.teamName.toLowerCase().includes(search.toLowerCase())
-    const loc          = locations.find(l => l._id === t.primaryLocation)
+    const loc          = locations.find(l => l._id === t.teamHomeLocation)
     const matchRegion  = regions.length === 0 || (loc && regions.includes(loc.region))
     return matchSearch && matchRegion
   })

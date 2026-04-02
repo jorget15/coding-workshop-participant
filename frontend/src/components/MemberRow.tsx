@@ -1,4 +1,8 @@
-import type { TeamMember } from '../store/teamSlice'
+import type { Individual, TeamMember } from '../store/teamSlice'
+import { formatDate } from '../utils/formatDate'
+import Avatar from './Avatar'
+import { useSelector } from 'react-redux'
+import type { RootState } from '../store'
 
 interface Props {
   member:       TeamMember
@@ -15,15 +19,14 @@ const roleBadge: Record<string, string> = {
 
 /** Single row in a members table. */
 export default function MemberRow({ member, onRemove, onDelegate }: Props) {
-  const initials = member.personName.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
+  const individuals = useSelector((s: RootState) => s.teams.individuals) as Individual[]
+  const person = individuals.find(i => i._id === member.personId)
 
   return (
     <tr className="border-b border-acme-border last:border-0">
       <td className="py-3 px-4">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-acme-action/10 flex items-center justify-center shrink-0">
-            <span className="text-acme-action text-xs font-bold">{initials}</span>
-          </div>
+          <Avatar name={member.personName} src={person?.profilePicture} size="sm" />
           <span className="text-acme-heading font-medium text-sm">{member.personName}</span>
         </div>
       </td>
@@ -37,7 +40,7 @@ export default function MemberRow({ member, onRemove, onDelegate }: Props) {
           {member.staffTypeSnapshot}
         </span>
       </td>
-      <td className="py-3 px-4 text-acme-muted text-xs">{member.startDate}</td>
+      <td className="py-3 px-4 text-acme-muted text-xs">{formatDate(member.startDate)}</td>
       {(onRemove || onDelegate) && (
         <td className="py-3 px-4">
           <div className="flex gap-2">
